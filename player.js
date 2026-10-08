@@ -241,7 +241,12 @@ function showUnsupported() {
   offline.hidden = false;
 }
 
-video.addEventListener('playing', function () { recovered(); start.hidden = true; });
+video.addEventListener('playing', function () {
+  // A 'playing' event does not prove frames are moving. Only hide the
+  // connecting UI once timeupdate actually advances the picture.
+  if (hasProgress) recovered();
+  start.hidden = true;
+});
 video.addEventListener('timeupdate', function () {
   if (!video.paused && Math.abs(video.currentTime - lastTime) > 0.25) {
     lastTime = video.currentTime;
@@ -339,6 +344,7 @@ document.addEventListener('visibilitychange', function () {
   if (document.hidden) { clearTimer(); status(''); healthySince = 0; }
   else {
     lastProgress = Date.now();
+    if (!requested) return; // returning to the tab must not bypass Android's Play button
     if (!gestureRequired) {
       if (video.error || video.ended || (engine === 'hls' && !hls)) attachStream();
       else play();
@@ -354,7 +360,7 @@ window.addEventListener('online', function () {
   attachStream();
 });
 window.addEventListener('offline', function () {
-  if (!retriesExpired && offline.hidden) status('Waiting for connection…');
+  if (requested && !retriesExpired && offline.hidden) status('Waiting for connection…');
 });
 
 if ('serviceWorker' in navigator) {
