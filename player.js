@@ -10,7 +10,7 @@
  *     Firefox, Android Chrome). Loaded from CDN in index.html.
  *  3. Unsupported panel when neither engine is available.
  *
- * Recovery: errors and prolonged stalls (>45 s without progress) trigger a
+ * Recovery: errors and prolonged stalls (>90 s without progress) trigger a
  * capped exponential-backoff retry (3 s ... 30 s). After 10 minutes of
  * continuous failure the offline panel is shown and automatic retries stop.
  * iOS Safari blocks autoplay with sound, so the first play() rejects with
@@ -21,6 +21,7 @@ const RETRY_DELAYS = [3000, 5000, 8000, 13000, 20000, 30000];
 const GIVE_UP_AFTER_MS = 10 * 60 * 1000; // show offline panel after 10 min of failures
 const NO_PROGRESS_MS = 90 * 1000;        // stall/freeze threshold
 const HEALTHY_RESET_MS = 30 * 1000;      // reset backoff after 30 s of healthy playback
+const BUFFERING_HINT_MS = 8000;
 
 const video = document.querySelector('#video');
 const start = document.querySelector('#start');
@@ -41,8 +42,8 @@ let requested = true;
 let gestureRequired = false;
 let wakeLock = null;
 let failureReason = 'Stream temporarily unavailable';
-let lastError = '';
-let bufferingHintTimer = null;
+let mediaRecoveryTried = false;
+let retriesExpired = false;
 
 const OFFLINE_DEFAULT_MSG = offlineMsg.textContent;
 
@@ -66,6 +67,8 @@ function attachStream() {
   detachStream();
   lastProgress = Date.now();
   lastTime = -1;
+  healthySince = 0;
+  mediaRecoveryTried = false;
   if (engine === 'hls') {
     hls = new Hls({
       enableWorker: true,
@@ -74,21 +77,49 @@ function attachStream() {
       backBufferLength: 30,
       startLevel: 0,
       capLevelToPlayerSize: true,
-      manifestLoadingTimeOut: 30000,
-      levelLoadingTimeOut: 30000,
-      fragLoadingTimeOut: 45000,
-      manifestLoadingMaxRetry: 6,
-      levelLoadingMaxRetry: 6,
-      fragLoadingMaxRetry: 6
+      // hls.js 1.6: LoadPolicies replace deprecated *LoadingTimeOut/*MaxRetry.
+      // Longer first-byte allowance handles mobile radios waking/slow DNS.
+      manifestLoadPolicy: {
+        default: {
+          maxTimeToFirstByteMs: 15000, maxLoadTimeMs: 30000,
+          timeoutRetry: { maxNumRetry: 2, retryDelayMs: 1000, maxRetryDelayMs: 5000 },
+          errorRetry: { maxNumRetry: 3, retryDelayMs: 1000, maxRetryDelayMs: 8000 }
+        }
+      },
+      playlistLoadPolicy: {
+        default: {
+          maxTimeToFirstByteMs: 15000, maxLoadTimeMs: 30000,
+          timeoutRetry: { maxNumRetry: 2, retryDelayMs: 1000, maxRetryDelayMs: 5000 },
+          errorRetry: { maxNumRetry: 4, retryDelayMs: 1000, maxRetryDelayMs: 8000 }
+        }
+      },
+      fragLoadPolicy: {
+        default: {
+          maxTimeToFirstByteMs: 20000, maxLoadTimeMs: 60000,
+          timeoutRetry: { maxNumRetry: 3, retryDelayMs: 1000, maxRetryDelayMs: 8000 },
+          errorRetry: { maxNumRetry: 6, retryDelayMs: 1000, maxRetryDelayMs: 12000 }
+        }
+      },
+      // If the viewer falls far behind a sliding live playlist, rejoin live.
+      liveSyncDurationCount: 3,
+      liveMaxLatencyDurationCount: 12
     });
     hls.on(Hls.Events.MANIFEST_PARSED, function () { play(); });
+    const instance = hls;
     hls.on(Hls.Events.ERROR, function (event, data) {
-      if (data && data.fatal) {
-        try { hls.destroy(); } catch (e) { /* ignore */ }
-        hls = null;
-        schedule(classifyHlsError(data));
+      if (instance !== hls || !data || !data.fatal) return;
+      // Non-fatal errors are already handled by hls.js. For fatal decoder
+      // errors give MSE one recovery attempt before a full source reload.
+      if (data.type === 'mediaError' && !mediaRecoveryTried &&
+          typeof instance.recoverMediaError === 'function') {
+        mediaRecoveryTried = true;
+        try { instance.recoverMediaError(); return; } catch (e) { /* fall through */ }
       }
-      // Non-fatal hls.js errors are retried internally; ignore them here.
+      // A playlist error can arrive while previously fetched video is still
+      // progressing. Never destroy healthy buffered playback prematurely.
+      if (!video.paused && !video.seeking && video.readyState >= 3 &&
+          !video.error && Date.now() - lastProgress < 10000) return;
+      schedule(classifyHlsError(data));
     });
     hls.loadSource(STREAM);
     hls.attachMedia(video);
@@ -139,22 +170,37 @@ async function play() {
 }
 
 function classifyHlsError(data) {
+  if (navigator.onLine === false) return 'No internet connection. Check Wi-Fi or mobile data.';
+  const code = data && data.response && data.response.code;
+  if (code === 403 || code === 404) return 'The TV stream is unavailable at the source right now.';
+  if (code >= 500) return 'The TV stream server is having trouble right now.';
   const details = String(data && (data.details || data.type) || '');
   if (/manifest|level|frag|network|timeout|load/i.test(details)) {
-    return navigator.onLine === false
-      ? 'No internet connection. Check Wi-Fi or mobile data.'
-      : 'Cannot reach the TV stream. Check your connection or Private DNS/VPN.';
+    return 'Cannot reach the TV stream. Check your connection, VPN or Private DNS.';
   }
-  return 'Playback interrupted. Trying again…';
+  return 'Playback was interrupted. Trying again…';
+}
+
+function classifyNativeError() {
+  if (navigator.onLine === false) return 'No internet connection. Check Wi-Fi or mobile data.';
+  const code = video.error && video.error.code;
+  if (code === 2) return 'The connection to the TV stream was interrupted.';
+  if (code === 3) return 'The video could not be decoded. Trying again…';
+  return 'The TV stream could not be loaded. Trying again…';
 }
 
 function schedule(reason) {
+  if (!requested || document.hidden || gestureRequired || retriesExpired || timer !== null ||
+      offline.hidden === false) return;
   failureReason = reason || failureReason;
+  healthySince = 0;
+  if (navigator.onLine === false) failureReason = 'No internet connection. Check Wi-Fi or mobile data.';
   if (!requested || document.hidden || gestureRequired || timer !== null ||
       (!video.paused && !video.seeking && video.readyState >= 3)) return;
   const now = Date.now();
   if (!firstFailure) firstFailure = now;
   if (now - firstFailure >= GIVE_UP_AFTER_MS) {
+    retriesExpired = true;
     status('');
     offlineMsg.textContent = failureReason === 'Stream temporarily unavailable' ? OFFLINE_DEFAULT_MSG : failureReason;
     retry.hidden = false;
@@ -165,7 +211,7 @@ function schedule(reason) {
   const delay = RETRY_DELAYS[Math.min(attempts++, RETRY_DELAYS.length - 1)];
   timer = setTimeout(function () {
     timer = null;
-    if (!requested || document.hidden) return;
+    if (!requested || document.hidden || retriesExpired) return;
     if (!video.paused && video.readyState >= 3) { recovered(); return; }
     attachStream();
   }, delay);
@@ -185,11 +231,21 @@ video.addEventListener('timeupdate', function () {
 });
 video.addEventListener('waiting', function () {
   setTimeout(function () {
-    if (!video.paused && video.readyState < 3 && !document.hidden) status('Buffering…');
-  }, 8000);
+    if (!video.paused && video.readyState < 3 && !document.hidden && !timer &&
+        !retriesExpired) status('Buffering…');
+  }, BUFFERING_HINT_MS);
 });
-video.addEventListener('error', function () { schedule('Media error'); });
-video.addEventListener('ended', function () { schedule('Stream ended'); });
+video.addEventListener('error', function () {
+  // A fatal MSE decoder error may still be recoverable by hls.js.
+  if (engine === 'hls' && hls && !mediaRecoveryTried &&
+      video.error && video.error.code === 3 &&
+      typeof hls.recoverMediaError === 'function') {
+    mediaRecoveryTried = true;
+    try { hls.recoverMediaError(); return; } catch (e) { /* fall through */ }
+  }
+  schedule(engine === 'native' ? classifyNativeError() : 'Playback error. Trying again…');
+});
+video.addEventListener('ended', function () { schedule('The live stream ended unexpectedly.'); });
 video.addEventListener('stalled', function () {
   if (Date.now() - lastProgress > NO_PROGRESS_MS) schedule('Stalled');
 });
@@ -208,6 +264,8 @@ function userPlay() {
   if (engine === null) { showUnsupported(); return; }
   requested = true;
   gestureRequired = false;
+  retriesExpired = false;
+  failureReason = OFFLINE_DEFAULT_MSG;
   start.hidden = true;
   offline.hidden = true;
   clearTimer();
@@ -229,7 +287,7 @@ document.addEventListener('visibilitychange', function () {
   else {
     lastProgress = Date.now();
     if (!gestureRequired) {
-      if (video.error || video.ended) attachStream();
+      if (video.error || video.ended || (engine === 'hls' && !hls)) attachStream();
       else play();
     }
     requestWake();
@@ -237,13 +295,15 @@ document.addEventListener('visibilitychange', function () {
 });
 
 window.addEventListener('online', function () {
-  if (document.hidden || gestureRequired || engine === null) return;
+  if (document.hidden || gestureRequired || engine === null || retriesExpired) return;
   clearTimer();
   const healthy = !video.paused && !video.seeking && video.readyState >= 3 && !video.error;
   if (healthy) { requestWake(); return; } // don't interrupt healthy playback on spurious online events
   attachStream();
 });
-window.addEventListener('offline', function () { status('Waiting for connection…'); });
+window.addEventListener('offline', function () {
+  if (!retriesExpired && offline.hidden) status('Waiting for connection…');
+});
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () {
