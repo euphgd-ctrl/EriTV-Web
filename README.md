@@ -12,7 +12,7 @@ with the broadcaster's permissions and applicable law.
 - **iPhone / iPad Safari:** native HLS via `video.canPlayType`. Sound-on
   autoplay may require tapping **Tap to Watch**, and the tap must call
   `video.play()` on the existing element without tearing down its source.
-- **Android Chrome (browser or installed PWA):** initially shows a large
+- **Android Chrome (browser or installed PWA):** **always uses hls.js/MSE**, even\n  if Chrome misleadingly claims native HLS support via `canPlayType`. This\n  fixes the native black-screen/retrying-idle path. On the first Play tap,\n  playback is requested synchronously to preserve the trusted user gesture,\n  without waiting for the manifest to finish loading. Initially shows a large
   **▶ Play EriTV** button. The HLS manifest and player are **not initialized
   before that tap**, which avoids unreliable sound-on autoplay and unlocks
   the media gesture. A blocked play attempt offers another tap without

@@ -181,10 +181,13 @@ ok('confirmed stream URL is the only stream source', () => {
   assert.ok(playerSrc.includes("'" + CONFIRMED_STREAM + "'"));
   assert.ok(!/proxy|cors-anywhere|allorigins|thingproxy/i.test(playerSrc), 'no proxy workarounds');
 });
-ok('native HLS path checked before hls.js fallback', () => {
-  const nativeIdx = playerSrc.indexOf("canPlayType('application/vnd.apple.mpegurl')");
-  const hlsIdx = playerSrc.indexOf('Hls.isSupported()');
-  assert.ok(nativeIdx > 0 && hlsIdx > nativeIdx, 'native check must come first');
+ok('Android checks hls.js BEFORE considering misleading native HLS support', () => {
+  const functionStart = playerSrc.indexOf('function selectEngine()');
+  const androidIdx = playerSrc.indexOf('if (isAndroid)', functionStart);
+  const nativeIdx = playerSrc.indexOf("video.canPlayType('application/vnd.apple.mpegurl')", functionStart);
+  assert.ok(functionStart >= 0 && androidIdx > functionStart && nativeIdx > androidIdx,
+    'Android must bypass native HLS support detection');
+  assert.ok(playerSrc.slice(androidIdx, nativeIdx).includes('Hls.isSupported()'));
 });
 
 function makeClock() {
@@ -466,6 +469,29 @@ await okAsync('native and MSE watchdogs recover from a frozen playing stream', a
   }
 });
 
+await okAsync('Android Chrome native HLS maybe must NOT bypass HLS.js', async () => {
+  const t = await loadPlayer({ native: true, android: true, playBehavior: 'resolve', withHls: true });
+  assert.equal(t.video.src, '', 'Android must not use native .m3u8 src');
+  assert.equal(t.video.playCalls, 0, 'no unreliable native autoplay');
+  assert.equal(t.Hls.instances.length, 0, 'user gesture still required');
+  assert.equal(t.els['#start'].hidden, false, 'one-tap start offered');
+  t.els['#start'].click();
+  assert.equal(t.Hls.instances.length, 1, 'HLS.js selected even when canPlayType returns maybe');
+  assert.equal(t.video.playCalls, 1, 'play called SYNCHRONOUSLY within Android user tap');
+  assert.equal(t.video.src, '', 'native HLS never selected');
+  t.Hls.instances[0].emit('MANIFEST_PARSED', {});
+  await t.tick();
+  assert.equal(t.video.playCalls, 1, 'manifest does not double-call play after trusted gesture');
+});
+
+await okAsync('Android Chrome without HLS.js never falls back to unreliable native HLS', async () => {
+  const t = await loadPlayer({ native: true, android: true, playBehavior: 'resolve', withHls: false });
+  assert.equal(t.video.src, '');
+  assert.equal(t.video.playCalls, 0);
+  assert.equal(t.els['#offline'].hidden, false, 'shows actionable missing player message');
+  assert.match(t.els['#offlineMsg'].textContent, /video player/);
+});
+
 await okAsync('Android: retries preserve the last meaningful startup stage', async () => {
   const t = await loadPlayer({ native: false, android: true, playBehavior: 'resolve', withHls: true });
   t.els['#start'].click();
@@ -529,6 +555,7 @@ await okAsync('Android: Play tap creates HLS engine, and manifest starts playbac
   const t = await loadPlayer({ native: false, android: true, playBehavior: 'resolve', withHls: true });
   t.els['#start'].click();
   assert.equal(t.Hls.instances.length, 1, 'initializes in the user click handler');
+  assert.equal(t.video.playCalls, 1, 'play starts on the very first tap, without waiting for manifest');
   assert.equal(t.Hls.instances[0].url, CONFIRMED_STREAM);
   assert.equal(t.Hls.instances[0].opts.startLevel, -1, 'Android initial quality is automatic');
   assert.equal(t.els['#start'].hidden, true);

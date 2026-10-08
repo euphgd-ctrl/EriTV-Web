@@ -58,6 +58,7 @@ let startupRetryCount = 0;
 let startupRecoveryTimer = null;
 let startupSession = 0;
 let startupAttempt = 0;
+let androidGesturePlayAttempt = false;
 let lastStartupStage = 'not started';
 
 const OFFLINE_DEFAULT_MSG = offlineMsg.textContent;
@@ -91,6 +92,13 @@ function healthyPlayback() {
 }
 
 function selectEngine() {
+  // Android Chrome can report `maybe` for HLS despite being unable to
+  // play the stream natively. Choosing native here caused the black-screen
+  // "Retrying (idle)" loop, because no hls.js session was ever created.
+  // Only Apple's native HLS is preferred; Android MUST use hls.js/MSE.
+  if (isAndroid) {
+    return typeof Hls !== 'undefined' && Hls.isSupported() ? 'hls' : null;
+  }
   if (video.canPlayType('application/vnd.apple.mpegurl') !== '') return 'native';
   if (typeof Hls !== 'undefined' && Hls.isSupported()) return 'hls';
   return null;
@@ -114,6 +122,7 @@ function attachStream() {
   hasProgress = false;
   healthySince = 0;
   mediaRecoveryTried = false;
+  androidGesturePlayAttempt = false;
   if (engine === 'hls') {
     startupAttempt++;
     startupIssue = '';
@@ -165,7 +174,10 @@ function attachStream() {
       if (instance !== hls) return;
       setStage('starting video');
       showStartupState();
-      play();
+      // The initial Android play() was already called synchronously inside
+      // the trusted user tap. Repeating it here can lose user activation.
+      // Background reconnects still need to call play() after the manifest.
+      if (!androidGesturePlayAttempt) play();
     });
     if (Hls.Events.MEDIA_ATTACHED) hls.on(Hls.Events.MEDIA_ATTACHED, function () {
       if (instance === hls && !hasProgress) { setStage('loading playlist'); showStartupState(); }
@@ -245,7 +257,10 @@ async function play() {
       return;
     }
     if (e.name === 'AbortError') return; // superseded by a newer load; recovery already in flight
-    if (e.name === 'NotSupportedError') { showUnsupported(); return; }
+    if (e.name === 'NotSupportedError') {
+      if (engine === 'hls') { schedule('HLS media source failed to initialize'); return; }
+      showUnsupported(); return;
+    }
     schedule('Playback interrupted');
   }
 }
@@ -403,6 +418,12 @@ function userPlay() {
   // For initial Android entry, attach hls.js only after the user taps Play.
   if (video.error || (!video.src && engine === 'native') || (engine === 'hls' && !hls)) {
     attachStream();
+    if (isAndroid && engine === 'hls') {
+      // Start playback in THIS click handler rather than later from
+      // MANIFEST_PARSED, when Chrome may reject sound-on playback.
+      androidGesturePlayAttempt = true;
+      play();
+    }
   } else {
     play();
   }
