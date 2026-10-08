@@ -187,7 +187,7 @@ ok('Android checks hls.js BEFORE considering misleading native HLS support', () 
   const nativeIdx = playerSrc.indexOf("video.canPlayType('application/vnd.apple.mpegurl')", functionStart);
   assert.ok(functionStart >= 0 && androidIdx > functionStart && nativeIdx > androidIdx,
     'Android must bypass native HLS support detection');
-  assert.match(playerSrc.slice(androidIdx, nativeIdx), /Hls\\.isSupported\\(\\)/);
+  assert.ok(playerSrc.slice(androidIdx, nativeIdx).includes('Hls.isSupported()'));
 });
 
 function makeClock() {
