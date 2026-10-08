@@ -24,6 +24,8 @@ const HEALTHY_RESET_MS = 30 * 1000;      // reset backoff after 30 s of healthy 
 const BUFFERING_HINT_MS = 8000;
 const STARTUP_TIMEOUT_MS = 65 * 1000; // no actual playback progress after an attempt
 const RECENT_PROGRESS_MS = 12 * 1000; // buffered data alone is not proof playback works
+const ANDROID_STARTUP_TIMEOUT_MS = 25000;
+const ANDROID_STARTUP_RETRY_LIMIT = 4;
 
 const video = document.querySelector('#video');
 const start = document.querySelector('#start');
@@ -49,10 +51,37 @@ let wakeLock = null;
 let failureReason = 'Stream temporarily unavailable';
 let mediaRecoveryTried = false;
 let retriesExpired = false;
+const isAndroid = /Android/i.test(navigator.userAgent || '');
+let startupStage = 'idle';
+let startupIssue = '';
+let startupRetryCount = 0;
+let startupRecoveryTimer = null;
+let startupSession = 0;
+let startupVariant = 0;
 
 const OFFLINE_DEFAULT_MSG = offlineMsg.textContent;
 
 function clearTimer() { if (timer !== null) { clearTimeout(timer); timer = null; } }
+function clearStartupTimer() { if (startupRecoveryTimer !== null) { clearTimeout(startupRecoveryTimer); startupRecoveryTimer = null; } }
+function setStage(stage) { startupStage = stage; }
+function startupFailureLabel() { return startupIssue || startupStage; }
+function showStartupState() {
+  if (!isAndroid || hasProgress || engine !== 'hls') return;
+  status('Connecting: ' + startupStage + ' · Tap to retry');
+}
+function startupTimeout() {
+  if (!isAndroid || engine !== 'hls' || !requested || document.hidden || hasProgress ||
+      gestureRequired || retriesExpired || timer !== null) return;
+  startupIssue = startupFailureLabel();
+  if (startupRetryCount >= ANDROID_STARTUP_RETRY_LIMIT) {
+    clearStartupTimer();
+    status('Could not start (' + startupIssue + ') · Tap to retry');
+    return;
+  }
+  startupRetryCount++;
+  // Initial HLS requests must not leave the viewer black for a full minute.
+  schedule('Startup stalled at ' + startupIssue);
+}
 function status(text) { pill.textContent = text; pill.hidden = !text; }
 function healthyPlayback() {
   return hasProgress && !video.paused && !video.seeking && !video.error &&
@@ -66,6 +95,8 @@ function selectEngine() {
 }
 
 function detachStream() {
+  clearStartupTimer();
+  startupSession++;
   playGeneration++; // ignore late play() resolutions from an obsolete source
   if (hls) { try { hls.destroy(); } catch (e) { /* ignore */ } hls = null; }
   try { video.pause(); } catch (e) { /* ignore */ }
@@ -82,13 +113,21 @@ function attachStream() {
   healthySince = 0;
   mediaRecoveryTried = false;
   if (engine === 'hls') {
-    status('Connecting… · Tap to retry');
+    setStage('loading playlist');
+    showStartupState();
+    const session = startupSession;
+    if (isAndroid) startupRecoveryTimer = setTimeout(function () {
+      if (session === startupSession) startupTimeout();
+    }, ANDROID_STARTUP_TIMEOUT_MS);
+    if (!isAndroid) status('Connecting… · Tap to retry');
     hls = new Hls({
       enableWorker: true,
       maxBufferLength: 60,
       maxMaxBufferLength: 120,
       backBufferLength: 30,
-      startLevel: 0,
+      // Android: use hls.js automatic initial quality selection, like
+      // ExoPlayer. Forcing level 0 may pin a broken/unsuitable rendition.
+      startLevel: isAndroid ? -1 : 0,
       capLevelToPlayerSize: true,
       // hls.js 1.6: LoadPolicies replace deprecated *LoadingTimeOut/*MaxRetry.
       // Longer first-byte allowance handles mobile radios waking/slow DNS.
@@ -119,10 +158,29 @@ function attachStream() {
     });
     const instance = hls;
     hls.on(Hls.Events.MANIFEST_PARSED, function () {
-      if (instance === hls) play();
+      if (instance !== hls) return;
+      setStage('starting video');
+      showStartupState();
+      play();
+    });
+    if (Hls.Events.MEDIA_ATTACHED) hls.on(Hls.Events.MEDIA_ATTACHED, function () {
+      if (instance === hls && !hasProgress) { setStage('loading playlist'); showStartupState(); }
+    });
+    if (Hls.Events.FRAG_LOADING) hls.on(Hls.Events.FRAG_LOADING, function () {
+      if (instance === hls && !hasProgress) { setStage('loading video'); showStartupState(); }
+    });
+    if (Hls.Events.FRAG_BUFFERED) hls.on(Hls.Events.FRAG_BUFFERED, function () {
+      if (instance === hls && !hasProgress) { setStage('decoding video'); showStartupState(); }
     });
     hls.on(Hls.Events.ERROR, function (event, data) {
-      if (instance !== hls || !data || !data.fatal) return;
+      if (instance !== hls || !data) return;
+      if (!hasProgress && isAndroid) {
+        const code = data.response && data.response.code;
+        const details = String(data.details || data.type || 'unknown');
+        startupIssue = details + (code ? ' HTTP ' + code : '');
+        if (data.fatal) status('Error: ' + startupIssue + ' · Tap to retry');
+      }
+      if (!data.fatal) return;
       // Non-fatal errors are already handled by hls.js. For fatal decoder
       // errors give MSE one recovery attempt before a full source reload.
       if (data.type === 'mediaError' && !mediaRecoveryTried &&
@@ -146,6 +204,9 @@ function attachStream() {
 
 function recovered() {
   clearTimer();
+  clearStartupTimer();
+  startupRetryCount = 0;
+  startupIssue = '';
   status('');
   offline.hidden = true;
   if (!healthySince) healthySince = Date.now();
@@ -223,7 +284,9 @@ function schedule(reason) {
   }
   status(navigator.onLine === false
     ? 'Waiting for connection · Tap to retry'
-    : 'Reconnecting… · Tap to retry');
+    : isAndroid && !hasProgress
+      ? 'Retrying (' + startupFailureLabel() + ') · Tap to retry'
+      : 'Reconnecting… · Tap to retry');
   const delay = RETRY_DELAYS[Math.min(attempts++, RETRY_DELAYS.length - 1)];
   timer = setTimeout(function () {
     timer = null;
@@ -305,13 +368,13 @@ setInterval(function () {
   const stalled = hasProgress
     ? now - lastProgress >= NO_PROGRESS_MS
     : now - startedAt >= STARTUP_TIMEOUT_MS;
-  if (stalled && timer === null) {
+  if (stalled && timer === null && !(isAndroid && !hasProgress && startupRetryCount >= ANDROID_STARTUP_RETRY_LIMIT)) {
     try { video.pause(); } catch (e) { /* ignore */ }
     schedule(hasProgress ? 'The picture stopped. Trying again…'
       : 'The stream is taking too long to start. Trying again…');
   } else if (!hasProgress && now - startedAt >= BUFFERING_HINT_MS && timer === null &&
       engine === 'hls') {
-    status('Still connecting… · Tap to retry');
+    showStartupState();
   }
 }, 5000);
 
@@ -325,6 +388,8 @@ function prepareUserAttempt() {
   clearTimer();
   attempts = 0;
   firstFailure = 0;
+  startupRetryCount = 0;
+  startupIssue = '';
 }
 function userPlay() {
   if (engine === null) { showUnsupported(); return; }
@@ -354,10 +419,11 @@ retry.addEventListener('click', userRetry);
 pill.addEventListener('click', userRetry);
 
 document.addEventListener('visibilitychange', function () {
-  if (document.hidden) { clearTimer(); status(''); healthySince = 0; }
+  if (document.hidden) { clearTimer(); clearStartupTimer(); status(''); healthySince = 0; }
   else {
     lastProgress = Date.now();
     if (!requested) return; // returning to the tab must not bypass Android's Play button
+    if (isAndroid && engine === 'hls' && !hasProgress) { attachStream(); return; }
     if (!gestureRequired) {
       if (video.error || video.ended || (engine === 'hls' && !hls)) attachStream();
       else play();
@@ -384,7 +450,7 @@ if ('serviceWorker' in navigator) {
 
 engine = selectEngine();
 if (engine === null) showUnsupported();
-else if (engine === 'hls' && /Android/i.test(navigator.userAgent || '')) {
+else if (engine === 'hls' && isAndroid) {
   // Android Chrome starts more reliably after an explicit user gesture. Do
   // not open the manifest, MSE session or retry loop until Play is tapped.
   requested = false;

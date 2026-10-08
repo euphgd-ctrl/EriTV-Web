@@ -249,7 +249,7 @@ function makeHlsStub() {
     emit(ev, data) { (this.handlers[ev] || []).forEach((f) => f(ev, data)); }
   };
   cls.instances = [];
-  cls.Events = { MANIFEST_PARSED: 'MANIFEST_PARSED', ERROR: 'ERROR' };
+  cls.Events = { MANIFEST_PARSED: 'MANIFEST_PARSED', ERROR: 'ERROR', MEDIA_ATTACHED: 'MEDIA_ATTACHED', FRAG_LOADING: 'FRAG_LOADING', FRAG_BUFFERED: 'FRAG_BUFFERED' };
   return cls;
 }
 const tick = async () => { await new Promise((r) => setImmediate(r)); await new Promise((r) => setImmediate(r)); };
@@ -382,7 +382,7 @@ await okAsync('hls.js fallback: attaches media, plays on manifest, fatal error r
 await okAsync('hls.js uses supported loading policies, bounded retries and adaptive levels', async () => {
   const t = await loadPlayer({ native: false, playBehavior: 'resolve', withHls: true });
   const c = t.Hls.instances[0].opts;
-  assert.equal(c.startLevel, 0, 'begin on smallest HLS level for flaky mobile data');
+  assert.equal(c.startLevel, 0, 'non-Android initial level remains unchanged');
   assert.equal(c.capLevelToPlayerSize, true, 'avoid unnecessary high resolution');
   assert.ok(c.maxBufferLength >= 30 && c.maxMaxBufferLength >= c.maxBufferLength);
   for (const name of ['manifestLoadPolicy', 'playlistLoadPolicy', 'fragLoadPolicy']) {
@@ -466,6 +466,36 @@ await okAsync('native and MSE watchdogs recover from a frozen playing stream', a
   }
 });
 
+await okAsync('Android: initial connection reports actual startup stages', async () => {
+  const t = await loadPlayer({ native: false, android: true, playBehavior: 'resolve', withHls: true });
+  t.els['#start'].click();
+  const inst = t.Hls.instances[0];
+  assert.match(t.els['#pill'].textContent, /loading playlist/);
+  inst.emit('FRAG_LOADING', {});
+  assert.match(t.els['#pill'].textContent, /loading video/);
+  inst.emit('FRAG_BUFFERED', {});
+  assert.match(t.els['#pill'].textContent, /decoding video/);
+  inst.emit('MANIFEST_PARSED', {});
+  assert.match(t.els['#pill'].textContent, /starting video/);
+});
+
+await okAsync('Android: 25-second first-frame timeout initiates a new attempt', async () => {
+  const t = await loadPlayer({ native: false, android: true, playBehavior: 'resolve', withHls: true });
+  t.els['#start'].click();
+  t.clock.advance(25000);
+  assert.match(t.els['#pill'].textContent, /Retrying/);
+  t.clock.advance(3000);
+  assert.equal(t.Hls.instances.length, 2);
+});
+
+await okAsync('Android: HLS error details are exposed on the small reconnect pill', async () => {
+  const t = await loadPlayer({ native: false, android: true, playBehavior: 'resolve', withHls: true });
+  t.els['#start'].click();
+  const inst = t.Hls.instances[0];
+  inst.emit('ERROR', { type: 'networkError', details: 'fragLoadError', response: { code: 403 }, fatal: true });
+  assert.match(t.els['#pill'].textContent, /fragLoadError HTTP 403/);
+});
+
 await okAsync('Android: no stream, retries, or background requests before Play tap', async () => {
   const t = await loadPlayer({ native: false, android: true, playBehavior: 'resolve', withHls: true });
   assert.equal(t.Hls.instances.length, 0, 'hls.js must not initialize before tap');
@@ -489,6 +519,7 @@ await okAsync('Android: Play tap creates HLS engine, and manifest starts playbac
   t.els['#start'].click();
   assert.equal(t.Hls.instances.length, 1, 'initializes in the user click handler');
   assert.equal(t.Hls.instances[0].url, CONFIRMED_STREAM);
+  assert.equal(t.Hls.instances[0].opts.startLevel, -1, 'Android initial quality is automatic');
   assert.equal(t.els['#start'].hidden, true);
   assert.equal(t.els['#pill'].hidden, false, 'shows connecting status');
   t.Hls.instances[0].emit('MANIFEST_PARSED', {});
@@ -512,23 +543,17 @@ await okAsync('Android: a ready-but-frozen video is NOT considered recovered', a
   assert.equal(inst.destroyed, true);
 });
 
-await okAsync('Android: no first frame by 65 seconds triggers bounded reconnection', async () => {
+await okAsync('Android: repeated no-frame startup attempts do not hang indefinitely', async () => {
   const t = await loadPlayer({ native: false, android: true, playBehavior: 'resolve', withHls: true });
   t.els['#start'].click();
-  const inst = t.Hls.instances[0];
-  inst.emit('MANIFEST_PARSED', {});
+  t.Hls.instances[0].emit('MANIFEST_PARSED', {});
   await t.tick();
   t.video.paused = false;
   t.video.readyState = 4;
   t.video.dispatch('playing');
-  t.clock.advance(60000);
-  assert.equal(t.Hls.instances.length, 1);
+  t.clock.advance(65000);
+  assert.ok(t.Hls.instances.length >= 2, 'startup watchdog retries instead of waiting 65 seconds');
   assert.match(t.els['#pill'].textContent, /Tap to retry/);
-  t.clock.advance(5000);
-  assert.match(t.els['#pill'].textContent, /Reconnecting/);
-  t.clock.advance(3000);
-  await t.tick();
-  assert.equal(t.Hls.instances.length, 2, 'no perpetual unresponsive MSE');
 });
 
 await okAsync('Android: tapping small reconnect pill performs an immediate hard reset', async () => {
@@ -536,7 +561,7 @@ await okAsync('Android: tapping small reconnect pill performs an immediate hard 
   t.els['#start'].click();
   const first = t.Hls.instances[0];
   first.emit('ERROR', { fatal: true, type: 'networkError', details: 'manifestLoadError' });
-  assert.match(t.els['#pill'].textContent, /Reconnecting/);
+  assert.match(t.els['#pill'].textContent, /Retrying/);
   t.els['#pill'].click();
   assert.equal(first.destroyed, true, 'stuck session discarded immediately');
   assert.equal(t.Hls.instances.length, 2);
