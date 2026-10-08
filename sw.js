@@ -8,10 +8,11 @@
  * Caching strategy:
  *  - Navigations: network-first, falling back to the cached app shell, and
  *    the fresh copy is stored so the offline shell stays current.
+ *  - player.js: network-first with cached fallback for prompt player fixes.
  *  - Other same-origin GETs: stale-while-revalidate -- serve the cached copy
  *    instantly, refresh it in the background for next time.
  */
-const CACHE = 'eritv-shell-v3';
+const CACHE = 'eritv-shell-v4';
 const ASSETS = [
   './',
   './index.html',
