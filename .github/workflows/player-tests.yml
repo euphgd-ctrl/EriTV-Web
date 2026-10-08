@@ -42,8 +42,7 @@ jobs:
           curl -sSL --connect-timeout 5 --max-time 15 -H 'Origin: https://euphgd-ctrl.github.io' -D /tmp/eritv-720-headers -o /tmp/eritv-720.m3u8 'https://jmc-live.ercdn.net/eritreatv/eritreatv_720p.m3u8'
           grep -Ei '^(HTTP/|access-control-|content-type:|cache-control:)' /tmp/eritv-720-headers || true
           head -24 /tmp/eritv-720.m3u8 || true
-          segment=$(grep -v '^#' /tmp/eritv-720.m3u8 | grep -v '^
- | head -1)
+          segment=$(awk 'NF && substr($0,1,1)!="#" {print; exit}' /tmp/eritv-720.m3u8)
           if [ -n "$segment" ]; then
             case "$segment" in https://*) segment_url="$segment" ;; *) segment_url="https://jmc-live.ercdn.net/eritreatv/$segment" ;; esac
             echo '--- First listed segment headers ---'
