@@ -117,8 +117,10 @@ function attachStream() {
       liveSyncDurationCount: 3,
       liveMaxLatencyDurationCount: 12
     });
-    hls.on(Hls.Events.MANIFEST_PARSED, function () { play(); });
     const instance = hls;
+    hls.on(Hls.Events.MANIFEST_PARSED, function () {
+      if (instance === hls) play();
+    });
     hls.on(Hls.Events.ERROR, function (event, data) {
       if (instance !== hls || !data || !data.fatal) return;
       // Non-fatal errors are already handled by hls.js. For fatal decoder
@@ -248,6 +250,9 @@ video.addEventListener('timeupdate', function () {
       hasProgress = true;
       healthySince = lastProgress; // 30 seconds of real progress, not just 'playing'
       recovered();
+    } else if (healthySince && Date.now() - healthySince >= HEALTHY_RESET_MS) {
+      attempts = 0;
+      firstFailure = 0;
     }
   }
 });
@@ -343,7 +348,7 @@ document.addEventListener('visibilitychange', function () {
 });
 
 window.addEventListener('online', function () {
-  if (document.hidden || gestureRequired || engine === null || retriesExpired) return;
+  if (!requested || document.hidden || gestureRequired || engine === null || retriesExpired) return;
   clearTimer();
   if (healthyPlayback()) { requestWake(); return; } // don't interrupt healthy playback on spurious online events
   attachStream();
