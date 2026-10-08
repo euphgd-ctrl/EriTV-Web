@@ -12,14 +12,23 @@ with the broadcaster's permissions and applicable law.
 - **iPhone / iPad Safari:** native HLS via `video.canPlayType`. Sound-on
   autoplay may require tapping **Tap to Watch**, and the tap must call
   `video.play()` on the existing element without tearing down its source.
-- **Android Chrome / desktop Chrome / Firefox / Edge:** hls.js **1.6.5** using
-  Media Source Extensions (MSE), loaded from jsDelivr with a pinned SRI hash.
-  Uses adaptive levels with an initial low-bandwidth level, a buffer target,
-  bounded manifest/playlist/segment load policies, and a defined live window.
-- **Both engines:** 90-second stall watchdog, buffering hint after 8 seconds,
-  3/5/8/13/20/30-second capped exponential reconnects, an offline panel after
-  10 minutes of continuous failure, and manual retry. Healthy video is **never
-  reset merely because of a transient network status change**.
+- **Android Chrome (browser or installed PWA):** initially shows a large
+  **▶ Play EriTV** button. The HLS manifest and player are **not initialized
+  before that tap**, which avoids unreliable sound-on autoplay and unlocks
+  the media gesture. A blocked play attempt offers another tap without
+  destroying its MSE player. **The small bottom reconnect pill is tappable**
+  to immediately rebuild a stuck connection.
+- **Desktop Chrome / Firefox / Edge:** hls.js **1.6.5** via MSE, loaded from
+  jsDelivr with a pinned integrity hash. Other nonnative platforms preserve
+  their prior startup behavior. All hls.js paths use adaptive quality with an
+  initial low-bandwidth level, bounded manifest/playlist/segment retries,
+  and a defined live window.
+- **Both engines:** a 65-second startup watchdog when no frame has advanced,
+  a 90-second watchdog for previously playing streams, a buffering hint after
+  8 seconds, 3/5/8/13/20/30-second capped exponential reconnects, and an
+  offline panel after 10 minutes of continuous failure. A buffered video is
+  not considered healthy until its playback position advances; a transient
+  network status change never resets genuinely advancing playback.
 - hls.js media errors receive a single in-place media-source recovery before
   the full reconnect mechanism. hls.js internally handles nonfatal errors.
 
@@ -53,8 +62,9 @@ node tests/run-tests.mjs
 
 GitHub Actions runs the syntax and regression tests on pushes and pull requests
 (`.github/workflows/player-tests.yml`). Coverage includes native and MSE
-engine selection, Safari autoplay gesture, recoveries, retry policy and timing,
-offline PWA routing, icons and manifest. `tests/browser-smoke.mjs` is an optional
+engine selection, Safari autoplay gesture, Android first-tap behavior,
+Android tab/network gating, stuck-but-buffered sessions, immediate manual
+reconnection, recovery, retry timing, offline PWA routing, icons and manifest. `tests/browser-smoke.mjs` is an optional
 sandbox-specific Chromium network smoke test, **not** a substitute for actual
 iPhone/Android playback checks.
 
