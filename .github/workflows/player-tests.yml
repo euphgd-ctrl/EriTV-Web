@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - improve/mobile-stream-resilience
+      - fix/android-hls-startup-diagnostics
   pull_request:
   workflow_dispatch:
 
