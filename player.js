@@ -236,8 +236,16 @@ function schedule(reason) {
 function showUnsupported() {
   clearTimer();
   status('');
-  offlineMsg.textContent = 'This browser cannot play the live stream. Please open this page in Safari on iPhone, iPad, or Mac.';
-  retry.hidden = true;
+  if (typeof Hls === 'undefined' && /Android/i.test(navigator.userAgent || '')) {
+    // On Android, a missing Hls library usually means the CDN script failed.
+    // Don't incorrectly tell a Chrome user that only Safari is supported.
+    offlineMsg.textContent = 'Could not load the video player. Check your connection, then reload.';
+    retry.textContent = 'Reload player';
+    retry.hidden = false;
+  } else {
+    offlineMsg.textContent = 'This browser cannot play the live stream. Please try an up-to-date Chrome or Safari browser.';
+    retry.hidden = true;
+  }
   offline.hidden = false;
 }
 
@@ -330,7 +338,12 @@ function userPlay() {
   }
 }
 function userRetry() {
-  if (engine === null) { showUnsupported(); return; }
+  if (engine === null) {
+    if (typeof Hls === 'undefined' && typeof window.location?.reload === 'function') {
+      window.location.reload();
+    } else showUnsupported();
+    return;
+  }
   prepareUserAttempt();
   // Unlike an autoplay gesture, explicit 'retry' means restart the network,
   // not play() on the same dead MSE buffer.
