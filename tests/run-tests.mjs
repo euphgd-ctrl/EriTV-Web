@@ -153,10 +153,18 @@ console.log('[service worker]');
       const cached = await globalThis.caches.match('./index.html').then((r) => r.text());
       assert.equal(cached, 'fresh-shell');
     });
+    await okAsync('player JavaScript is network-first and remains available offline', async () => {
+      fetchImpl = async () => new Response('fresh-player', { status: 200 });
+      const fresh = await fireFetch(req('./player.js')).then((r) => r.text());
+      assert.equal(fresh, 'fresh-player', 'player gets the current release');
+      fetchImpl = async () => { throw new Error('offline'); };
+      const cached = await fireFetch(req('./player.js')).then((r) => r.text());
+      assert.equal(cached, 'fresh-player', 'offline fallback stays functional');
+    });
     await okAsync('app-shell GET uses stale-while-revalidate', async () => {
       let netCalls = 0;
       fetchImpl = async () => { netCalls++; return new Response('v2', { status: 200 }); };
-      const first = await fireFetch(req('./player.js')).then((r) => r.text());
+      const first = await fireFetch(req('./manifest.webmanifest')).then((r) => r.text());
       assert.ok(first.startsWith('cached:'), 'served stale immediately, got: ' + first);
       await new Promise((r) => setImmediate(r));
       assert.equal(netCalls, 1, 'background revalidation fired');
