@@ -330,7 +330,9 @@ await okAsync('native retries 3s then 5s and resets after 30s of real progress',
   t.video.paused = false;
   t.video.readyState = 4;
   t.video.dispatch('playing'); await t.tick();
-  assert.equal(t.els['#pill'].hidden, true, 'pill cleared on recovery');
+  t.video.currentTime = 1;
+  t.video.dispatch('timeupdate');
+  assert.equal(t.els['#pill'].hidden, true, 'pill clears only once playback moves');
   for (let i = 0; i < 7; i++) {
     t.clock.advance(5000);
     t.video.currentTime += 5;
@@ -471,6 +473,10 @@ await okAsync('Android: no stream, retries, or background requests before Play t
   assert.equal(t.clock.pending(), 1);
   (t.winListeners.online || []).forEach((fn) => fn());
   assert.equal(t.Hls.instances.length, 0, 'online event must not start playback');
+  (t.docListeners.visibilitychange || []).forEach((fn) => fn());
+  assert.equal(t.Hls.instances.length, 0, 'tab focus must not start playback');
+  (t.winListeners.offline || []).forEach((fn) => fn());
+  assert.equal(t.els['#pill'].hidden, true, 'offline status stays hidden until Play');
 });
 
 await okAsync('Android: Play tap creates HLS engine, and manifest starts playback', async () => {
