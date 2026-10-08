@@ -254,7 +254,7 @@ function makeHlsStub() {
 }
 const tick = async () => { await new Promise((r) => setImmediate(r)); await new Promise((r) => setImmediate(r)); };
 
-async function loadPlayer({ native, playBehavior, withHls }) {
+async function loadPlayer({ native, playBehavior, withHls, android = false }) {
   const clock = makeClock();
   const video = makeVideo(native, playBehavior);
   const els = { '#video': video, '#start': makeEl(), '#pill': makeEl(), '#offline': makeEl(), '#offlineMsg': makeEl(), '#retry': makeEl() };
@@ -270,7 +270,7 @@ async function loadPlayer({ native, playBehavior, withHls }) {
       addEventListener: (t, f) => { (docListeners[t] = docListeners[t] || []).push(f); },
     },
     window: { addEventListener: (t, f) => { (winListeners[t] = winListeners[t] || []).push(f); } },
-    navigator: { serviceWorker: { register: async (u) => { registeredSW.push(u); } } },
+    navigator: { userAgent: android ? 'Mozilla/5.0 (Linux; Android 16) Chrome/140' : 'Mozilla/5.0 (iPhone)', serviceWorker: { register: async (u) => { registeredSW.push(u); } } },
     setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout,
     setInterval: clock.setInterval, clearInterval: clock.clearInterval,
     Date: { now: clock.now },
@@ -457,6 +457,104 @@ await okAsync('native and MSE watchdogs recover from a frozen playing stream', a
     assert.equal(native ? t.video.playCalls : t.Hls.instances.length, 2,
       'frozen stream rebuilt after backoff');
   }
+});
+
+await okAsync('Android: no stream, retries, or background requests before Play tap', async () => {
+  const t = await loadPlayer({ native: false, android: true, playBehavior: 'resolve', withHls: true });
+  assert.equal(t.Hls.instances.length, 0, 'hls.js must not initialize before tap');
+  assert.equal(t.video.playCalls, 0);
+  assert.equal(t.els['#start'].hidden, false, 'Play must be visible');
+  assert.match(t.els['#start'].textContent, /Play EriTV/);
+  assert.equal(t.els['#pill'].hidden, true, 'no premature reconnect loop');
+  t.clock.advance(130000);
+  assert.equal(t.Hls.instances.length, 0, 'watchdog must ignore non-started viewer');
+  assert.equal(t.clock.pending(), 1);
+  (t.winListeners.online || []).forEach((fn) => fn());
+  assert.equal(t.Hls.instances.length, 0, 'online event must not start playback');
+});
+
+await okAsync('Android: Play tap creates HLS engine, and manifest starts playback', async () => {
+  const t = await loadPlayer({ native: false, android: true, playBehavior: 'resolve', withHls: true });
+  t.els['#start'].click();
+  assert.equal(t.Hls.instances.length, 1, 'initializes in the user click handler');
+  assert.equal(t.Hls.instances[0].url, CONFIRMED_STREAM);
+  assert.equal(t.els['#start'].hidden, true);
+  assert.equal(t.els['#pill'].hidden, false, 'shows connecting status');
+  t.Hls.instances[0].emit('MANIFEST_PARSED', {});
+  await t.tick();
+  assert.equal(t.video.playCalls, 1, 'tries play when manifest is ready');
+});
+
+await okAsync('Android: a ready-but-frozen video is NOT considered recovered', async () => {
+  const t = await loadPlayer({ native: false, android: true, playBehavior: 'resolve', withHls: true });
+  t.els['#start'].click();
+  const inst = t.Hls.instances[0];
+  inst.emit('MANIFEST_PARSED', {});
+  await t.tick();
+  t.video.paused = false;
+  t.video.readyState = 4; // buffered frames do not prove that playback advances
+  inst.emit('ERROR', { type: 'networkError', details: 'levelLoadTimeout', fatal: true });
+  assert.equal(t.els['#pill'].hidden, false, 'reconnecting must be visible');
+  t.clock.advance(3000);
+  await t.tick();
+  assert.equal(t.Hls.instances.length, 2, 'retry replaces frozen MSE session');
+  assert.equal(inst.destroyed, true);
+});
+
+await okAsync('Android: no first frame by 65 seconds triggers bounded reconnection', async () => {
+  const t = await loadPlayer({ native: false, android: true, playBehavior: 'resolve', withHls: true });
+  t.els['#start'].click();
+  const inst = t.Hls.instances[0];
+  inst.emit('MANIFEST_PARSED', {});
+  await t.tick();
+  t.video.paused = false;
+  t.video.readyState = 4;
+  t.video.dispatch('playing');
+  t.clock.advance(60000);
+  assert.equal(t.Hls.instances.length, 1);
+  assert.match(t.els['#pill'].textContent, /Tap to retry/);
+  t.clock.advance(5000);
+  assert.match(t.els['#pill'].textContent, /Reconnecting/);
+  t.clock.advance(3000);
+  await t.tick();
+  assert.equal(t.Hls.instances.length, 2, 'no perpetual unresponsive MSE');
+});
+
+await okAsync('Android: tapping small reconnect pill performs an immediate hard reset', async () => {
+  const t = await loadPlayer({ native: false, android: true, playBehavior: 'resolve', withHls: true });
+  t.els['#start'].click();
+  const first = t.Hls.instances[0];
+  first.emit('ERROR', { fatal: true, type: 'networkError', details: 'manifestLoadError' });
+  assert.match(t.els['#pill'].textContent, /Reconnecting/);
+  t.els['#pill'].click();
+  assert.equal(first.destroyed, true, 'stuck session discarded immediately');
+  assert.equal(t.Hls.instances.length, 2);
+  t.clock.advance(3000);
+  assert.equal(t.Hls.instances.length, 2, 'old retry timer was cancelled');
+});
+
+await okAsync('Android: autoplay policy fallback Tap to Watch keeps same HLS session', async () => {
+  const t = await loadPlayer({ native: false, android: true, playBehavior: { name: 'NotAllowedError' }, withHls: true });
+  t.els['#start'].click();
+  const inst = t.Hls.instances[0];
+  inst.emit('MANIFEST_PARSED', {});
+  await t.tick();
+  assert.equal(t.els['#start'].hidden, false);
+  const loads = t.video.loadCalls;
+  t.video.playBehavior = 'resolve';
+  t.els['#start'].click();
+  await t.tick();
+  assert.equal(t.Hls.instances.length, 1, 'does not rebuild on an autoplay prompt');
+  assert.equal(t.video.loadCalls, loads);
+  assert.equal(t.video.playCalls, 2);
+});
+
+await okAsync('iPhone: native HLS retains autoplay attempt and Safari gesture fallback', async () => {
+  const t = await loadPlayer({ native: true, android: false, playBehavior: 'resolve', withHls: true });
+  assert.equal(t.video.src, CONFIRMED_STREAM);
+  assert.equal(t.video.playCalls, 1);
+  assert.equal(t.Hls.instances.length, 0, 'Safari must never use MSE');
+  assert.equal(t.els['#start'].hidden, true);
 });
 
 await okAsync('no engine: unsupported panel shown, retry hidden', async () => {
