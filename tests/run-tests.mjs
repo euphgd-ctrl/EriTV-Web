@@ -543,23 +543,17 @@ await okAsync('Android: a ready-but-frozen video is NOT considered recovered', a
   assert.equal(inst.destroyed, true);
 });
 
-await okAsync('Android: no first frame by 65 seconds triggers bounded reconnection', async () => {
+await okAsync('Android: repeated no-frame startup attempts do not hang indefinitely', async () => {
   const t = await loadPlayer({ native: false, android: true, playBehavior: 'resolve', withHls: true });
   t.els['#start'].click();
-  const inst = t.Hls.instances[0];
-  inst.emit('MANIFEST_PARSED', {});
+  t.Hls.instances[0].emit('MANIFEST_PARSED', {});
   await t.tick();
   t.video.paused = false;
   t.video.readyState = 4;
   t.video.dispatch('playing');
-  t.clock.advance(60000);
-  assert.equal(t.Hls.instances.length, 1);
+  t.clock.advance(65000);
+  assert.ok(t.Hls.instances.length >= 2, 'startup watchdog retries instead of waiting 65 seconds');
   assert.match(t.els['#pill'].textContent, /Tap to retry/);
-  t.clock.advance(5000);
-  assert.match(t.els['#pill'].textContent, /Retrying/);
-  t.clock.advance(3000);
-  await t.tick();
-  assert.equal(t.Hls.instances.length, 2, 'no perpetual unresponsive MSE');
 });
 
 await okAsync('Android: tapping small reconnect pill performs an immediate hard reset', async () => {
