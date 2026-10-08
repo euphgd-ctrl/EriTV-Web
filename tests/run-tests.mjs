@@ -153,10 +153,18 @@ console.log('[service worker]');
       const cached = await globalThis.caches.match('./index.html').then((r) => r.text());
       assert.equal(cached, 'fresh-shell');
     });
+    await okAsync('player JavaScript is network-first and remains available offline', async () => {
+      fetchImpl = async () => new Response('fresh-player', { status: 200 });
+      const fresh = await fireFetch(req('./player.js')).then((r) => r.text());
+      assert.equal(fresh, 'fresh-player', 'player gets the current release');
+      fetchImpl = async () => { throw new Error('offline'); };
+      const cached = await fireFetch(req('./player.js')).then((r) => r.text());
+      assert.equal(cached, 'fresh-player', 'offline fallback stays functional');
+    });
     await okAsync('app-shell GET uses stale-while-revalidate', async () => {
       let netCalls = 0;
       fetchImpl = async () => { netCalls++; return new Response('v2', { status: 200 }); };
-      const first = await fireFetch(req('./player.js')).then((r) => r.text());
+      const first = await fireFetch(req('./manifest.webmanifest')).then((r) => r.text());
       assert.ok(first.startsWith('cached:'), 'served stale immediately, got: ' + first);
       await new Promise((r) => setImmediate(r));
       assert.equal(netCalls, 1, 'background revalidation fired');
@@ -237,6 +245,7 @@ function makeHlsStub() {
     loadSource(url) { this.url = url; }
     attachMedia(v) { this.media = v; }
     destroy() { this.destroyed = true; }
+    recoverMediaError() { this.recoverCalls = (this.recoverCalls || 0) + 1; }
     emit(ev, data) { (this.handlers[ev] || []).forEach((f) => f(ev, data)); }
   };
   cls.instances = [];
@@ -290,10 +299,12 @@ await okAsync('autoplay blocked: tap-to-watch shown, no retry storm', async () =
   assert.equal(t.els['#start'].hidden, false, 'tap button visible');
   assert.equal(t.els['#pill'].hidden, true, 'no reconnect pill while waiting for gesture');
   assert.equal(t.clock.pending(), 1, 'only the health interval pending, got ' + t.clock.pending());
+  const beforeTapLoads = t.video.loadCalls;
   t.video.playBehavior = 'resolve';
   t.els['#start'].click();
   await t.tick();
   assert.equal(t.video.playCalls, 2, 'tap retries play');
+  assert.equal(t.video.loadCalls, beforeTapLoads, 'tap does not reload native video, preserving iOS activation');
   assert.equal(t.els['#start'].hidden, true);
 });
 
@@ -303,7 +314,7 @@ await okAsync('AbortError from superseded play() does not schedule a retry', asy
   assert.equal(t.clock.pending(), 1, 'no retry timer for AbortError');
 });
 
-await okAsync('error triggers backoff retries 3s then 5s, recovery resets backoff', async () => {
+await okAsync('native retries 3s then 5s and resets after 30s of real progress', async () => {
   const t = await loadPlayer({ native: true, playBehavior: 'resolve', withHls: false });
   t.video.dispatch('error');
   assert.equal(t.els['#pill'].hidden, false, 'reconnect pill shown');
@@ -316,11 +327,19 @@ await okAsync('error triggers backoff retries 3s then 5s, recovery resets backof
   assert.equal(t.video.playCalls, 2, 'no retry before 5s');
   t.clock.advance(1); await t.tick();
   assert.equal(t.video.playCalls, 3, 'second retry at 5s (backoff)');
+  t.video.paused = false;
+  t.video.readyState = 4;
   t.video.dispatch('playing'); await t.tick();
   assert.equal(t.els['#pill'].hidden, true, 'pill cleared on recovery');
+  for (let i = 0; i < 7; i++) {
+    t.clock.advance(5000);
+    t.video.currentTime += 5;
+    t.video.dispatch('timeupdate');
+  }
+  t.video.pause();
   t.video.dispatch('error');
   t.clock.advance(3000); await t.tick();
-  assert.equal(t.video.playCalls, 4, 'backoff reset to 3s after healthy recovery');
+  assert.equal(t.video.playCalls, 4, 'backoff resets to 3s only after sustained playback');
 });
 
 await okAsync('10 minutes of failure shows offline panel and stops auto-retry', async () => {
@@ -344,12 +363,100 @@ await okAsync('hls.js fallback: attaches media, plays on manifest, fatal error r
   inst.emit('ERROR', { fatal: false });
   await t.tick();
   assert.equal(t.clock.pending(), 1, 'non-fatal hls error ignored (internal retry)');
-  inst.emit('ERROR', { fatal: true });
+  inst.emit('ERROR', { fatal: true, type: 'networkError', details: 'manifestLoadError' });
   await t.tick();
-  assert.equal(inst.destroyed, true, 'fatal error destroys hls instance');
+  assert.equal(inst.destroyed, false, 'fatal error waits for backoff rather than prematurely destroying');
   t.clock.advance(3000); await t.tick();
+  assert.equal(inst.destroyed, true, 'failed instance destroyed on actual retry');
   assert.equal(t.Hls.instances.length, 2, 'retry rebuilds hls.js');
   assert.equal(t.Hls.instances[1].url, CONFIRMED_STREAM);
+});
+
+await okAsync('hls.js uses supported loading policies, bounded retries and adaptive levels', async () => {
+  const t = await loadPlayer({ native: false, playBehavior: 'resolve', withHls: true });
+  const c = t.Hls.instances[0].opts;
+  assert.equal(c.startLevel, 0, 'begin on smallest HLS level for flaky mobile data');
+  assert.equal(c.capLevelToPlayerSize, true, 'avoid unnecessary high resolution');
+  assert.ok(c.maxBufferLength >= 30 && c.maxMaxBufferLength >= c.maxBufferLength);
+  for (const name of ['manifestLoadPolicy', 'playlistLoadPolicy', 'fragLoadPolicy']) {
+    const p = c[name].default;
+    assert.ok(p.maxTimeToFirstByteMs >= 10000, name);
+    assert.ok(p.maxLoadTimeMs <= 60000, name);
+    assert.ok(p.errorRetry.maxNumRetry >= 2 && p.errorRetry.maxNumRetry <= 6, name);
+    assert.ok(p.timeoutRetry.maxNumRetry <= 3, name);
+  }
+  assert.equal(c.fragLoadingTimeOut, undefined, 'use policy APIs, not deprecated timeout');
+  assert.ok(c.liveMaxLatencyDurationCount > c.liveSyncDurationCount);
+});
+
+await okAsync('hls.js does not interrupt healthy video on a fatal network report', async () => {
+  const t = await loadPlayer({ native: false, playBehavior: 'resolve', withHls: true });
+  const inst = t.Hls.instances[0];
+  inst.emit('MANIFEST_PARSED', {});
+  await t.tick();
+  t.video.paused = false;
+  t.video.readyState = 4;
+  t.video.currentTime = 10;
+  t.video.dispatch('timeupdate');
+  inst.emit('ERROR', { fatal: true, type: 'networkError', details: 'fragLoadError' });
+  assert.equal(inst.destroyed, false, 'buffered video kept alive');
+  assert.equal(t.Hls.instances.length, 1, 'no needless source rebuild');
+  assert.equal(t.clock.pending(), 1, 'only regular watchdog');
+});
+
+await okAsync('hls.js gives fatal media error exactly one in-place recovery', async () => {
+  const t = await loadPlayer({ native: false, playBehavior: 'resolve', withHls: true });
+  const inst = t.Hls.instances[0];
+  inst.emit('ERROR', { fatal: true, type: 'mediaError', details: 'bufferStalledError' });
+  assert.equal(inst.recoverCalls, 1, 'recover MSE media source without reloading');
+  assert.equal(t.Hls.instances.length, 1);
+  inst.emit('ERROR', { fatal: true, type: 'mediaError', details: 'bufferStalledError' });
+  assert.equal(inst.recoverCalls, 1, 'do not spin on repeated decoder errors');
+  t.clock.advance(3000); await t.tick();
+  assert.equal(t.Hls.instances.length, 2, 'subsequent fatal error uses bounded full reload');
+});
+
+await okAsync('native HLS error classification does not present a technical error code', async () => {
+  const t = await loadPlayer({ native: true, playBehavior: 'resolve', withHls: false });
+  t.video.error = { code: 2 };
+  for (let i = 0; i < 25; i++) {
+    t.video.dispatch('error');
+    t.clock.advance(31000);
+    await t.tick();
+  }
+  assert.ok(/connection/i.test(t.els['#offlineMsg'].textContent));
+  assert.equal(t.els['#offline'].hidden, false);
+});
+
+await okAsync('Android hls.js autoplay rejection recovers from the same player after a tap', async () => {
+  const t = await loadPlayer({ native: false, playBehavior: { name: 'NotAllowedError' }, withHls: true });
+  const inst = t.Hls.instances[0];
+  inst.emit('MANIFEST_PARSED', {});
+  await t.tick();
+  assert.equal(t.els['#start'].hidden, false, 'user is prompted to tap');
+  const loads = t.video.loadCalls;
+  t.video.playBehavior = 'resolve';
+  t.els['#start'].click();
+  await t.tick();
+  assert.equal(t.video.playCalls, 2);
+  assert.equal(t.video.loadCalls, loads, 'no new media source is created on gesture');
+  assert.equal(t.Hls.instances.length, 1, 'hls.js instance preserved');
+  assert.equal(t.els['#start'].hidden, true);
+});
+
+await okAsync('native and MSE watchdogs recover from a frozen playing stream', async () => {
+  for (const native of [true, false]) {
+    const t = await loadPlayer({ native, playBehavior: 'resolve', withHls: !native });
+    if (!native) { t.Hls.instances[0].emit('MANIFEST_PARSED', {}); await t.tick(); }
+    t.video.paused = false;
+    t.video.readyState = 4;
+    t.clock.advance(95000);
+    assert.equal(t.els['#pill'].hidden, false, 'watchdog schedules retry for ' + (native ? 'Safari' : 'MSE'));
+    t.clock.advance(3000);
+    await t.tick();
+    assert.equal(native ? t.video.playCalls : t.Hls.instances.length, 2,
+      'frozen stream rebuilt after backoff');
+  }
 });
 
 await okAsync('no engine: unsupported panel shown, retry hidden', async () => {

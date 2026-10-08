@@ -1,81 +1,63 @@
 # EriTV Web
 
-Unofficial, single-channel HLS viewer for the EriTV live stream. **No affiliation
-with the broadcaster is asserted. Confirm stream and branding permissions before
-any public launch.** The site must stay private / undeployed until that
-confirmation is given.
+Minimal, one-channel live HLS viewer for EriTV on iPhone and Android, hosted at
+https://euphgd-ctrl.github.io/EriTV-Web/ .
 
-Stream: `https://jmc-live.ercdn.net/eritreatv/eritreatv.m3u8`
-(Master playlist verified live: 1080p / 720p / 360p variants, HTTPS, and the
-server sends `Access-Control-Allow-Origin: *`. No proxy is used anywhere.)
+This is an **unofficial** viewer and does not claim broadcaster affiliation.
+Any redistribution, use of the broadcaster's stream, name or imagery must comply
+with the broadcaster's permissions and applicable law.
 
-## Player (`player.js`)
+## Playback
 
-Engine selection, in order:
+- **iPhone / iPad Safari:** native HLS via `video.canPlayType`. Sound-on
+  autoplay may require tapping **Tap to Watch**, and the tap must call
+  `video.play()` on the existing element without tearing down its source.
+- **Android Chrome / desktop Chrome / Firefox / Edge:** hls.js **1.6.5** using
+  Media Source Extensions (MSE), loaded from jsDelivr with a pinned SRI hash.
+  Uses adaptive levels with an initial low-bandwidth level, a buffer target,
+  bounded manifest/playlist/segment load policies, and a defined live window.
+- **Both engines:** 90-second stall watchdog, buffering hint after 8 seconds,
+  3/5/8/13/20/30-second capped exponential reconnects, an offline panel after
+  10 minutes of continuous failure, and manual retry. Healthy video is **never
+  reset merely because of a transient network status change**.
+- hls.js media errors receive a single in-place media-source recovery before
+  the full reconnect mechanism. hls.js internally handles nonfatal errors.
 
-1. **Native HLS** — iOS Safari and macOS Safari report
-   `canPlayType('application/vnd.apple.mpegurl')`; the stream URL is assigned to
-   the `<video>` element directly and Safari's built-in HLS stack plays it.
-2. **hls.js fallback** — Chrome, Edge, Firefox, Android Chrome. Loaded from
-   jsDelivr with a pinned version and subresource-integrity hash
-   (see the `<script>` tag in `index.html`).
-3. **Unsupported panel** when neither engine is available.
+The single channel source URL is stored in `player.js`:
+`https://jmc-live.ercdn.net/eritreatv/eritreatv.m3u8`.
 
-Recovery:
+Browser buffering is **not identical** to Android Media3 ExoPlayer. Apple's
+native HLS engine chooses its own buffering, variant and live-edge behavior;
+JavaScript has no reliable API to change Safari's internal HLS buffer.
+The publisher's sliding live playlist also limits how much future video can
+be buffered, regardless of configured target lengths. The viewer cannot
+bypass ISP/CDN restrictions or guarantee the third-party stream stays online.
 
-- Errors and stalls (no playback progress for 45 s) trigger capped
-  exponential-backoff retries: 3 s, 5 s, 8 s, 13 s, 20 s, then 30 s.
-- After 10 minutes of continuous failure the offline panel appears and
-  automatic retries stop; "Try again" restarts manually.
-- Fatal hls.js errors destroy the hls.js instance and feed the same retry
-  machinery; non-fatal hls.js errors are retried internally by hls.js.
-- `play()` promise rejections are classified: `NotAllowedError` shows the
-  "Tap to Watch" button (iOS Safari autoplay policy) instead of retrying;
-  `AbortError` (superseded play) is ignored; `NotSupportedError` shows the
-  unsupported panel.
-- Returning to the tab / regaining connectivity reloads only when playback is
-  not already healthy, so a good stream is never interrupted.
+## Progressive web app (PWA)
 
-No HLS media (.m3u8 / .ts / .m4s) is ever cached by the service worker.
+- HTTPS GitHub Pages, standalone manifest, iPhone/Android icons.
+- Service worker caches **only the app shell**; HLS media and CDN resources
+  bypass it completely, preventing stale live playlists/segments.
+- HTML navigation and `player.js` use network-first with offline fallback,
+  ensuring bug fixes are served on the next online reload.
+- All other same-origin app-shell assets use stale-while-revalidate.
+- Screen wake lock is requested where browser support and permissions allow it.
 
-## Service worker (`sw.js`)
+## Tests and publishing
 
-- App shell (HTML, JS, manifest, icons) cached for offline launch.
-- Navigations: network-first with cached fallback; the fresh shell is stored so
-  the offline copy stays current.
-- Other same-origin GETs: stale-while-revalidate.
-- Stream playlists/segments and all cross-origin requests bypass the worker.
+```sh
+node --check player.js
+node --check sw.js
+node tests/run-tests.mjs
+```
 
-## PWA
+GitHub Actions runs the syntax and regression tests on pushes and pull requests
+(`.github/workflows/player-tests.yml`). Coverage includes native and MSE
+engine selection, Safari autoplay gesture, recoveries, retry policy and timing,
+offline PWA routing, icons and manifest. `tests/browser-smoke.mjs` is an optional
+sandbox-specific Chromium network smoke test, **not** a substitute for actual
+iPhone/Android playback checks.
 
-`manifest.webmanifest` (installable, standalone, black theme), 192/512 px PNG
-icons plus a 180 px Apple touch icon. HTTPS is required for installability and
-screen wake lock.
-
-## Tests
-
-`npm test`-style, dependency-free: `node tests/run-tests.mjs`
-
-- Static checks: manifest, icons (valid PNG, correct sizes), HTML wiring.
-- Service-worker routing logic (install caching, stream bypass, offline
-  navigation fallback) against stubbed Cache APIs.
-- Player logic: engine selection, autoplay-gesture flow, retry scheduling and
-  backoff, recovery reset, hls.js fatal-error path, unsupported panel.
-- `node tests/browser-smoke.mjs` (optional): loads the page in headless
-  Chromium, asserts no JS errors, hls.js initializes, the confirmed manifest
-  URL is requested, and the service worker registers. (Decoded-frame playback
-  is not asserted: this sandbox's egress proxy intermittently stalls tunneled
-  media requests, so manifest bytes can't be fetched deterministically here;
-  the stream is verified independently via direct fetch.)
-
-## Deployment
-
-Static site; publish the repository root. GitHub Pages: Settings → Pages →
-Deploy from branch → `main` / root. Or Cloudflare Pages with no build command
-and `/` as the output directory. **Do not enable public hosting until stream
-and branding permissions are confirmed.**
-
-## Update stream
-
-Edit `STREAM` in `player.js`, bump `CACHE` in `sw.js`, commit; redeploy
-automatically if hosting is configured.
+GitHub Pages publishes from `main` (repository root). Development changes
+should first pass on a branch before merging; GitHub Pages then deploys the
+same static files. No build step is required.
