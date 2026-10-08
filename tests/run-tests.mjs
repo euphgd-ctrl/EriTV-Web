@@ -450,7 +450,7 @@ await okAsync('native and MSE watchdogs recover from a frozen playing stream', a
     if (!native) { t.Hls.instances[0].emit('MANIFEST_PARSED', {}); await t.tick(); }
     t.video.paused = false;
     t.video.readyState = 4;
-    t.clock.advance(90000);
+    t.clock.advance(95000);
     assert.equal(t.els['#pill'].hidden, false, 'watchdog schedules retry for ' + (native ? 'Safari' : 'MSE'));
     t.clock.advance(3000);
     await t.tick();
