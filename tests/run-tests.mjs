@@ -263,13 +263,17 @@ async function loadPlayer({ native, playBehavior, withHls, android = false }) {
   const docListeners = {};
   const winListeners = {};
   const registeredSW = [];
+  let pageReloads = 0;
   const sandbox = {
     document: {
       querySelector: (s) => els[s],
       hidden: false, visibilityState: 'visible',
       addEventListener: (t, f) => { (docListeners[t] = docListeners[t] || []).push(f); },
     },
-    window: { addEventListener: (t, f) => { (winListeners[t] = winListeners[t] || []).push(f); } },
+    window: {
+      addEventListener: (t, f) => { (winListeners[t] = winListeners[t] || []).push(f); },
+      location: { reload: () => { pageReloads++; } },
+    },
     navigator: { userAgent: android ? 'Mozilla/5.0 (Linux; Android 16) Chrome/140' : 'Mozilla/5.0 (iPhone)', serviceWorker: { register: async (u) => { registeredSW.push(u); } } },
     setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout,
     setInterval: clock.setInterval, clearInterval: clock.clearInterval,
@@ -283,7 +287,8 @@ async function loadPlayer({ native, playBehavior, withHls, android = false }) {
   // fire window load -> service worker registration
   (winListeners.load || []).forEach((f) => f());
   await tick();
-  return { clock, video, els, docListeners, winListeners, registeredSW, Hls, tick };
+  return { clock, video, els, docListeners, winListeners, registeredSW, Hls, tick,
+    pageReloads: () => pageReloads };
 }
 
 await okAsync('native engine: stream assigned, play attempted, SW registered', async () => {
@@ -561,6 +566,16 @@ await okAsync('iPhone: native HLS retains autoplay attempt and Safari gesture fa
   assert.equal(t.video.playCalls, 1);
   assert.equal(t.Hls.instances.length, 0, 'Safari must never use MSE');
   assert.equal(t.els['#start'].hidden, true);
+});
+
+await okAsync('Android: failed player-library CDN shows an actionable reload', async () => {
+  const t = await loadPlayer({ native: false, android: true, playBehavior: 'resolve', withHls: false });
+  assert.equal(t.els['#offline'].hidden, false);
+  assert.equal(t.els['#retry'].hidden, false);
+  assert.match(t.els['#offlineMsg'].textContent, /video player/);
+  assert.equal(t.els['#retry'].textContent, 'Reload player');
+  t.els['#retry'].click();
+  assert.equal(t.pageReloads(), 1);
 });
 
 await okAsync('no engine: unsupported panel shown, retry hidden', async () => {
