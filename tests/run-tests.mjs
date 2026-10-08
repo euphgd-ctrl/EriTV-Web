@@ -428,6 +428,37 @@ await okAsync('native HLS error classification does not present a technical erro
   assert.equal(t.els['#offline'].hidden, false);
 });
 
+await okAsync('Android hls.js autoplay rejection recovers from the same player after a tap', async () => {
+  const t = await loadPlayer({ native: false, playBehavior: { name: 'NotAllowedError' }, withHls: true });
+  const inst = t.Hls.instances[0];
+  inst.emit('MANIFEST_PARSED', {});
+  await t.tick();
+  assert.equal(t.els['#start'].hidden, false, 'user is prompted to tap');
+  const loads = t.video.loadCalls;
+  t.video.playBehavior = 'resolve';
+  t.els['#start'].click();
+  await t.tick();
+  assert.equal(t.video.playCalls, 2);
+  assert.equal(t.video.loadCalls, loads, 'no new media source is created on gesture');
+  assert.equal(t.Hls.instances.length, 1, 'hls.js instance preserved');
+  assert.equal(t.els['#start'].hidden, true);
+});
+
+await okAsync('native and MSE watchdogs recover from a frozen playing stream', async () => {
+  for (const native of [true, false]) {
+    const t = await loadPlayer({ native, playBehavior: 'resolve', withHls: !native });
+    if (!native) { t.Hls.instances[0].emit('MANIFEST_PARSED', {}); await t.tick(); }
+    t.video.paused = false;
+    t.video.readyState = 4;
+    t.clock.advance(90000);
+    assert.equal(t.els['#pill'].hidden, false, 'watchdog schedules retry for ' + (native ? 'Safari' : 'MSE'));
+    t.clock.advance(3000);
+    await t.tick();
+    assert.equal(native ? t.video.playCalls : t.Hls.instances.length, 2,
+      'frozen stream rebuilt after backoff');
+  }
+});
+
 await okAsync('no engine: unsupported panel shown, retry hidden', async () => {
   const t = await loadPlayer({ native: false, playBehavior: 'resolve', withHls: false });
   assert.equal(t.els['#offline'].hidden, false);
