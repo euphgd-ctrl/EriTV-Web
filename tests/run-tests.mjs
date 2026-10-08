@@ -466,6 +466,15 @@ await okAsync('native and MSE watchdogs recover from a frozen playing stream', a
   }
 });
 
+await okAsync('Android: retries preserve the last meaningful startup stage', async () => {
+  const t = await loadPlayer({ native: false, android: true, playBehavior: 'resolve', withHls: true });
+  t.els['#start'].click();
+  t.Hls.instances[0].emit('FRAG_LOADING', {});
+  t.clock.advance(65000);
+  assert.match(t.els['#pill'].textContent, /loading video/);
+  assert.doesNotMatch(t.els['#pill'].textContent, /idle/);
+});
+
 await okAsync('Android: initial connection reports actual startup stages', async () => {
   const t = await loadPlayer({ native: false, android: true, playBehavior: 'resolve', withHls: true });
   t.els['#start'].click();
@@ -479,10 +488,12 @@ await okAsync('Android: initial connection reports actual startup stages', async
   assert.match(t.els['#pill'].textContent, /starting video/);
 });
 
-await okAsync('Android: 25-second first-frame timeout initiates a new attempt', async () => {
+await okAsync('Android: wait for segment timeout before restarting the player', async () => {
   const t = await loadPlayer({ native: false, android: true, playBehavior: 'resolve', withHls: true });
   t.els['#start'].click();
   t.clock.advance(25000);
+  assert.equal(t.Hls.instances.length, 1, 'do not kill an active segment request after 25 seconds');
+  t.clock.advance(40000);
   assert.match(t.els['#pill'].textContent, /Retrying/);
   t.clock.advance(3000);
   assert.equal(t.Hls.instances.length, 2);
@@ -551,8 +562,8 @@ await okAsync('Android: repeated no-frame startup attempts do not hang indefinit
   t.video.paused = false;
   t.video.readyState = 4;
   t.video.dispatch('playing');
-  t.clock.advance(65000);
-  assert.ok(t.Hls.instances.length >= 2, 'startup watchdog retries instead of waiting 65 seconds');
+  t.clock.advance(68000);
+  assert.ok(t.Hls.instances.length >= 2, 'startup watchdog retries after full 65-second loading window');
   assert.match(t.els['#pill'].textContent, /Tap to retry/);
 });
 

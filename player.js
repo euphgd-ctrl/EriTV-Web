@@ -24,7 +24,7 @@ const HEALTHY_RESET_MS = 30 * 1000;      // reset backoff after 30 s of healthy 
 const BUFFERING_HINT_MS = 8000;
 const STARTUP_TIMEOUT_MS = 65 * 1000; // no actual playback progress after an attempt
 const RECENT_PROGRESS_MS = 12 * 1000; // buffered data alone is not proof playback works
-const ANDROID_STARTUP_TIMEOUT_MS = 25000;
+const ANDROID_STARTUP_TIMEOUT_MS = 65000; // allow 60s fragment load policy to complete
 const ANDROID_STARTUP_RETRY_LIMIT = 4;
 
 const video = document.querySelector('#video');
@@ -57,14 +57,15 @@ let startupIssue = '';
 let startupRetryCount = 0;
 let startupRecoveryTimer = null;
 let startupSession = 0;
-let startupVariant = 0;
+let startupAttempt = 0;
+let lastStartupStage = 'not started';
 
 const OFFLINE_DEFAULT_MSG = offlineMsg.textContent;
 
 function clearTimer() { if (timer !== null) { clearTimeout(timer); timer = null; } }
 function clearStartupTimer() { if (startupRecoveryTimer !== null) { clearTimeout(startupRecoveryTimer); startupRecoveryTimer = null; } }
-function setStage(stage) { startupStage = stage; }
-function startupFailureLabel() { return startupIssue || startupStage; }
+function setStage(stage) { startupStage = stage; if (stage !== 'idle') lastStartupStage = stage; }
+function startupFailureLabel() { return startupIssue || (startupStage !== 'idle' ? startupStage : lastStartupStage); }
 function showStartupState() {
   if (!isAndroid || hasProgress || engine !== 'hls') return;
   status('Connecting: ' + startupStage + ' · Tap to retry');
@@ -72,14 +73,15 @@ function showStartupState() {
 function startupTimeout() {
   if (!isAndroid || engine !== 'hls' || !requested || document.hidden || hasProgress ||
       gestureRequired || retriesExpired || timer !== null) return;
-  startupIssue = startupFailureLabel();
+  const failedAt = startupFailureLabel();
+  startupIssue = failedAt;
   if (startupRetryCount >= ANDROID_STARTUP_RETRY_LIMIT) {
     clearStartupTimer();
     status('Could not start (' + startupIssue + ') · Tap to retry');
     return;
   }
   startupRetryCount++;
-  // Initial HLS requests must not leave the viewer black for a full minute.
+  // Allow hls.js to exhaust its own segment timeouts before restarting MSE.
   schedule('Startup stalled at ' + startupIssue);
 }
 function status(text) { pill.textContent = text; pill.hidden = !text; }
@@ -113,6 +115,8 @@ function attachStream() {
   healthySince = 0;
   mediaRecoveryTried = false;
   if (engine === 'hls') {
+    startupAttempt++;
+    startupIssue = '';
     setStage('loading playlist');
     showStartupState();
     const session = startupSession;
@@ -390,6 +394,7 @@ function prepareUserAttempt() {
   firstFailure = 0;
   startupRetryCount = 0;
   startupIssue = '';
+  lastStartupStage = 'not started';
 }
 function userPlay() {
   if (engine === null) { showUnsupported(); return; }
