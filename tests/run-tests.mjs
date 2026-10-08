@@ -181,10 +181,13 @@ ok('confirmed stream URL is the only stream source', () => {
   assert.ok(playerSrc.includes("'" + CONFIRMED_STREAM + "'"));
   assert.ok(!/proxy|cors-anywhere|allorigins|thingproxy/i.test(playerSrc), 'no proxy workarounds');
 });
-ok('native HLS path checked before hls.js fallback', () => {
-  const nativeIdx = playerSrc.indexOf("canPlayType('application/vnd.apple.mpegurl')");
-  const hlsIdx = playerSrc.indexOf('Hls.isSupported()');
-  assert.ok(nativeIdx > 0 && hlsIdx > nativeIdx, 'native check must come first');
+ok('Android checks hls.js BEFORE considering misleading native HLS support', () => {
+  const functionStart = playerSrc.indexOf('function selectEngine()');
+  const androidIdx = playerSrc.indexOf('if (isAndroid)', functionStart);
+  const nativeIdx = playerSrc.indexOf("video.canPlayType('application/vnd.apple.mpegurl')", functionStart);
+  assert.ok(functionStart >= 0 && androidIdx > functionStart && nativeIdx > androidIdx,
+    'Android must bypass native HLS support detection');
+  assert.match(playerSrc.slice(androidIdx, nativeIdx), /Hls\\.isSupported\\(\\)/);
 });
 
 function makeClock() {
