@@ -109,6 +109,7 @@ function startRelay(cert, key) {
             if (j === -1) return;
             up.off('data', h);
             if (!/^HTTP\/1\.[01] 200/.test(ub.subarray(0, j).toString('latin1'))) { client.destroy(); up.destroy(); return; }
+            client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
             up.on('data', (d) => client.write(d));
             client.on('data', (d) => { try { up.write(d); } catch {} });
             client.write(ub.subarray(j + 4));
