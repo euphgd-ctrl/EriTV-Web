@@ -22,6 +22,8 @@ const GIVE_UP_AFTER_MS = 10 * 60 * 1000; // show offline panel after 10 min of f
 const NO_PROGRESS_MS = 90 * 1000;        // stall/freeze threshold
 const HEALTHY_RESET_MS = 30 * 1000;      // reset backoff after 30 s of healthy playback
 const BUFFERING_HINT_MS = 8000;
+const STARTUP_TIMEOUT_MS = 65 * 1000; // no actual playback progress after an attempt
+const RECENT_PROGRESS_MS = 12 * 1000; // buffered data alone is not proof playback works
 
 const video = document.querySelector('#video');
 const start = document.querySelector('#start');
@@ -37,6 +39,9 @@ let attempts = 0;
 let firstFailure = 0;
 let lastProgress = Date.now();
 let lastTime = -1;
+let startedAt = Date.now();
+let hasProgress = false;
+let playGeneration = 0;
 let healthySince = 0;
 let requested = true;
 let gestureRequired = false;
@@ -49,6 +54,10 @@ const OFFLINE_DEFAULT_MSG = offlineMsg.textContent;
 
 function clearTimer() { if (timer !== null) { clearTimeout(timer); timer = null; } }
 function status(text) { pill.textContent = text; pill.hidden = !text; }
+function healthyPlayback() {
+  return hasProgress && !video.paused && !video.seeking && !video.error &&
+    Date.now() - lastProgress < RECENT_PROGRESS_MS;
+}
 
 function selectEngine() {
   if (video.canPlayType('application/vnd.apple.mpegurl') !== '') return 'native';
@@ -57,6 +66,7 @@ function selectEngine() {
 }
 
 function detachStream() {
+  playGeneration++; // ignore late play() resolutions from an obsolete source
   if (hls) { try { hls.destroy(); } catch (e) { /* ignore */ } hls = null; }
   try { video.pause(); } catch (e) { /* ignore */ }
   video.removeAttribute('src');
@@ -66,10 +76,13 @@ function detachStream() {
 function attachStream() {
   detachStream();
   lastProgress = Date.now();
+  startedAt = lastProgress;
   lastTime = -1;
+  hasProgress = false;
   healthySince = 0;
   mediaRecoveryTried = false;
   if (engine === 'hls') {
+    status('Connecting… · Tap to retry');
     hls = new Hls({
       enableWorker: true,
       maxBufferLength: 60,
@@ -117,8 +130,7 @@ function attachStream() {
       }
       // A playlist error can arrive while previously fetched video is still
       // progressing. Never destroy healthy buffered playback prematurely.
-      if (!video.paused && !video.seeking && video.readyState >= 3 &&
-          !video.error && Date.now() - lastProgress < 10000) return;
+      if (healthyPlayback()) return;
       schedule(classifyHlsError(data));
     });
     hls.loadSource(STREAM);
@@ -150,12 +162,14 @@ async function requestWake() {
 
 async function play() {
   if (!requested || document.hidden || engine === null) return;
+  const generation = playGeneration;
   try {
     await video.play();
+    if (generation !== playGeneration) return;
     gestureRequired = false;
     start.hidden = true;
   } catch (e) {
-    if (!e) return;
+    if (generation !== playGeneration || !e) return;
     if (e.name === 'NotAllowedError') {
       // Safari / mobile autoplay policy: wait for an explicit tap.
       gestureRequired = true;
@@ -190,13 +204,11 @@ function classifyNativeError() {
 }
 
 function schedule(reason) {
-  if (!requested || document.hidden || gestureRequired || retriesExpired || timer !== null ||
-      offline.hidden === false) return;
+  if (!requested || document.hidden || gestureRequired || retriesExpired ||
+      timer !== null || !offline.hidden || healthyPlayback()) return;
   failureReason = reason || failureReason;
   healthySince = 0;
   if (navigator.onLine === false) failureReason = 'No internet connection. Check Wi-Fi or mobile data.';
-  if (!requested || document.hidden || gestureRequired || timer !== null ||
-      (!video.paused && !video.seeking && video.readyState >= 3)) return;
   const now = Date.now();
   if (!firstFailure) firstFailure = now;
   if (now - firstFailure >= GIVE_UP_AFTER_MS) {
@@ -207,12 +219,14 @@ function schedule(reason) {
     offline.hidden = false;
     return;
   }
-  status(navigator.onLine === false ? 'Waiting for connection…' : 'Reconnecting…');
+  status(navigator.onLine === false
+    ? 'Waiting for connection · Tap to retry'
+    : 'Reconnecting… · Tap to retry');
   const delay = RETRY_DELAYS[Math.min(attempts++, RETRY_DELAYS.length - 1)];
   timer = setTimeout(function () {
     timer = null;
     if (!requested || document.hidden || retriesExpired) return;
-    if (!video.paused && video.readyState >= 3) { recovered(); return; }
+    if (healthyPlayback()) { recovered(); return; }
     attachStream();
   }, delay);
 }
@@ -227,7 +241,15 @@ function showUnsupported() {
 
 video.addEventListener('playing', function () { recovered(); start.hidden = true; });
 video.addEventListener('timeupdate', function () {
-  if (Math.abs(video.currentTime - lastTime) > 0.25) { lastTime = video.currentTime; lastProgress = Date.now(); }
+  if (!video.paused && Math.abs(video.currentTime - lastTime) > 0.25) {
+    lastTime = video.currentTime;
+    lastProgress = Date.now();
+    if (!hasProgress) {
+      hasProgress = true;
+      healthySince = lastProgress; // 30 seconds of real progress, not just 'playing'
+      recovered();
+    }
+  }
 });
 video.addEventListener('waiting', function () {
   setTimeout(function () {
@@ -251,17 +273,31 @@ video.addEventListener('stalled', function () {
 });
 
 setInterval(function () {
-  if (document.hidden || gestureRequired || !requested || engine === null) return;
-  if (!video.paused && video.readyState >= 3) {
-    if (Date.now() - lastProgress > NO_PROGRESS_MS) { video.pause(); schedule('Frozen stream'); }
-    else if (healthySince && Date.now() - healthySince > HEALTHY_RESET_MS && Date.now() - lastProgress < 10000) { attempts = 0; firstFailure = 0; }
-  } else if (!timer && Date.now() - lastProgress > NO_PROGRESS_MS) {
-    schedule('Timeout');
+  if (document.hidden || gestureRequired || !requested || engine === null || retriesExpired) return;
+  const now = Date.now();
+  if (healthyPlayback()) {
+    if (healthySince && now - healthySince >= HEALTHY_RESET_MS) {
+      attempts = 0;
+      firstFailure = 0;
+    }
+    return;
+  }
+  // A resolved play() promise or HAVE_FUTURE_DATA may still be a frozen image.
+  // Allow slow mobile manifests / segments time to load, but never wait forever.
+  const stalled = hasProgress
+    ? now - lastProgress >= NO_PROGRESS_MS
+    : now - startedAt >= STARTUP_TIMEOUT_MS;
+  if (stalled && timer === null) {
+    try { video.pause(); } catch (e) { /* ignore */ }
+    schedule(hasProgress ? 'The picture stopped. Trying again…'
+      : 'The stream is taking too long to start. Trying again…');
+  } else if (!hasProgress && now - startedAt >= BUFFERING_HINT_MS && timer === null &&
+      engine === 'hls') {
+    status('Still connecting… · Tap to retry');
   }
 }, 5000);
 
-function userPlay() {
-  if (engine === null) { showUnsupported(); return; }
+function prepareUserAttempt() {
   requested = true;
   gestureRequired = false;
   retriesExpired = false;
@@ -271,16 +307,28 @@ function userPlay() {
   clearTimer();
   attempts = 0;
   firstFailure = 0;
-  // A tap must call play() synchronously on the existing video element:
-  // tearing down/reloading HLS here loses Safari's user activation.
+}
+function userPlay() {
+  if (engine === null) { showUnsupported(); return; }
+  prepareUserAttempt();
+  // Never reset an already attached native source on a Safari gesture.
+  // For initial Android entry, attach hls.js only after the user taps Play.
   if (video.error || (!video.src && engine === 'native') || (engine === 'hls' && !hls)) {
     attachStream();
   } else {
     play();
   }
 }
+function userRetry() {
+  if (engine === null) { showUnsupported(); return; }
+  prepareUserAttempt();
+  // Unlike an autoplay gesture, explicit 'retry' means restart the network,
+  // not play() on the same dead MSE buffer.
+  attachStream();
+}
 start.addEventListener('click', userPlay);
-retry.addEventListener('click', userPlay);
+retry.addEventListener('click', userRetry);
+pill.addEventListener('click', userRetry);
 
 document.addEventListener('visibilitychange', function () {
   if (document.hidden) { clearTimer(); status(''); healthySince = 0; }
@@ -297,8 +345,7 @@ document.addEventListener('visibilitychange', function () {
 window.addEventListener('online', function () {
   if (document.hidden || gestureRequired || engine === null || retriesExpired) return;
   clearTimer();
-  const healthy = !video.paused && !video.seeking && video.readyState >= 3 && !video.error;
-  if (healthy) { requestWake(); return; } // don't interrupt healthy playback on spurious online events
+  if (healthyPlayback()) { requestWake(); return; } // don't interrupt healthy playback on spurious online events
   attachStream();
 });
 window.addEventListener('offline', function () {
@@ -313,4 +360,10 @@ if ('serviceWorker' in navigator) {
 
 engine = selectEngine();
 if (engine === null) showUnsupported();
-else attachStream();
+else if (engine === 'hls' && /Android/i.test(navigator.userAgent || '')) {
+  // Android Chrome starts more reliably after an explicit user gesture. Do
+  // not open the manifest, MSE session or retry loop until Play is tapped.
+  requested = false;
+  start.textContent = '▶ Play EriTV';
+  start.hidden = false;
+} else attachStream();
