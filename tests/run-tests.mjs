@@ -562,8 +562,8 @@ await okAsync('Android: repeated no-frame startup attempts do not hang indefinit
   t.video.paused = false;
   t.video.readyState = 4;
   t.video.dispatch('playing');
-  t.clock.advance(65000);
-  assert.ok(t.Hls.instances.length >= 2, 'startup watchdog retries instead of waiting 65 seconds');
+  t.clock.advance(68000);
+  assert.ok(t.Hls.instances.length >= 2, 'startup watchdog retries after full 65-second loading window');
   assert.match(t.els['#pill'].textContent, /Tap to retry/);
 });
 
