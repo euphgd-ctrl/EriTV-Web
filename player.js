@@ -19,7 +19,7 @@
 const STREAM = 'https://jmc-live.ercdn.net/eritreatv/eritreatv.m3u8';
 const RETRY_DELAYS = [3000, 5000, 8000, 13000, 20000, 30000];
 const GIVE_UP_AFTER_MS = 10 * 60 * 1000; // show offline panel after 10 min of failures
-const NO_PROGRESS_MS = 45 * 1000;        // stall/freeze threshold
+const NO_PROGRESS_MS = 90 * 1000;        // stall/freeze threshold
 const HEALTHY_RESET_MS = 30 * 1000;      // reset backoff after 30 s of healthy playback
 
 const video = document.querySelector('#video');
@@ -40,6 +40,9 @@ let healthySince = 0;
 let requested = true;
 let gestureRequired = false;
 let wakeLock = null;
+let failureReason = 'Stream temporarily unavailable';
+let lastError = '';
+let bufferingHintTimer = null;
 
 const OFFLINE_DEFAULT_MSG = offlineMsg.textContent;
 
@@ -64,13 +67,26 @@ function attachStream() {
   lastProgress = Date.now();
   lastTime = -1;
   if (engine === 'hls') {
-    hls = new Hls({ enableWorker: true, maxBufferLength: 30 });
+    hls = new Hls({
+      enableWorker: true,
+      maxBufferLength: 60,
+      maxMaxBufferLength: 120,
+      backBufferLength: 30,
+      startLevel: 0,
+      capLevelToPlayerSize: true,
+      manifestLoadingTimeOut: 30000,
+      levelLoadingTimeOut: 30000,
+      fragLoadingTimeOut: 45000,
+      manifestLoadingMaxRetry: 6,
+      levelLoadingMaxRetry: 6,
+      fragLoadingMaxRetry: 6
+    });
     hls.on(Hls.Events.MANIFEST_PARSED, function () { play(); });
     hls.on(Hls.Events.ERROR, function (event, data) {
       if (data && data.fatal) {
         try { hls.destroy(); } catch (e) { /* ignore */ }
         hls = null;
-        schedule('Stream error');
+        schedule(classifyHlsError(data));
       }
       // Non-fatal hls.js errors are retried internally; ignore them here.
     });
@@ -87,9 +103,7 @@ function recovered() {
   clearTimer();
   status('');
   offline.hidden = true;
-  attempts = 0;
-  firstFailure = 0;
-  healthySince = Date.now();
+  if (!healthySince) healthySince = Date.now();
   lastProgress = Date.now();
   requestWake();
 }
@@ -124,19 +138,30 @@ async function play() {
   }
 }
 
+function classifyHlsError(data) {
+  const details = String(data && (data.details || data.type) || '');
+  if (/manifest|level|frag|network|timeout|load/i.test(details)) {
+    return navigator.onLine === false
+      ? 'No internet connection. Check Wi-Fi or mobile data.'
+      : 'Cannot reach the TV stream. Check your connection or Private DNS/VPN.';
+  }
+  return 'Playback interrupted. Trying again…';
+}
+
 function schedule(reason) {
+  failureReason = reason || failureReason;
   if (!requested || document.hidden || gestureRequired || timer !== null ||
       (!video.paused && !video.seeking && video.readyState >= 3)) return;
   const now = Date.now();
   if (!firstFailure) firstFailure = now;
   if (now - firstFailure >= GIVE_UP_AFTER_MS) {
     status('');
-    offlineMsg.textContent = OFFLINE_DEFAULT_MSG;
+    offlineMsg.textContent = failureReason === 'Stream temporarily unavailable' ? OFFLINE_DEFAULT_MSG : failureReason;
     retry.hidden = false;
     offline.hidden = false;
     return;
   }
-  status('Reconnecting…');
+  status(navigator.onLine === false ? 'Waiting for connection…' : 'Reconnecting…');
   const delay = RETRY_DELAYS[Math.min(attempts++, RETRY_DELAYS.length - 1)];
   timer = setTimeout(function () {
     timer = null;
@@ -173,7 +198,7 @@ setInterval(function () {
   if (document.hidden || gestureRequired || !requested || engine === null) return;
   if (!video.paused && video.readyState >= 3) {
     if (Date.now() - lastProgress > NO_PROGRESS_MS) { video.pause(); schedule('Frozen stream'); }
-    else if (Date.now() - healthySince > HEALTHY_RESET_MS) { attempts = 0; firstFailure = 0; }
+    else if (healthySince && Date.now() - healthySince > HEALTHY_RESET_MS && Date.now() - lastProgress < 10000) { attempts = 0; firstFailure = 0; }
   } else if (!timer && Date.now() - lastProgress > NO_PROGRESS_MS) {
     schedule('Timeout');
   }
@@ -188,13 +213,19 @@ function userPlay() {
   clearTimer();
   attempts = 0;
   firstFailure = 0;
-  attachStream();
+  // A tap must call play() synchronously on the existing video element:
+  // tearing down/reloading HLS here loses Safari's user activation.
+  if (video.error || (!video.src && engine === 'native') || (engine === 'hls' && !hls)) {
+    attachStream();
+  } else {
+    play();
+  }
 }
 start.addEventListener('click', userPlay);
 retry.addEventListener('click', userPlay);
 
 document.addEventListener('visibilitychange', function () {
-  if (document.hidden) { clearTimer(); status(''); }
+  if (document.hidden) { clearTimer(); status(''); healthySince = 0; }
   else {
     lastProgress = Date.now();
     if (!gestureRequired) {
