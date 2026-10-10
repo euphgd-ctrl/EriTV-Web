@@ -68,7 +68,6 @@ for (const [name, needle] of [
   ['hls.js integrity hash', 'integrity="sha384-'],
   ['player.js script', 'src="./player.js"'],
   ['offline message element', 'id="offlineMsg"'],
-  ['background audio toggle', 'id="background"'],
 ]) ok('html has ' + name, () => assert.ok(html.includes(needle), needle));
 
 /* ---------------- 4. service worker routing ---------------- */
@@ -262,7 +261,7 @@ const tick = async () => { await new Promise((r) => setImmediate(r)); await new 
 async function loadPlayer({ native, playBehavior, withHls, android = false }) {
   const clock = makeClock();
   const video = makeVideo(native, playBehavior);
-  const els = { '#video': video, '#start': makeEl(), '#pill': makeEl(), '#offline': makeEl(), '#offlineMsg': makeEl(), '#retry': makeEl(), '#background': makeEl() };
+  const els = { '#video': video, '#start': makeEl(), '#pill': makeEl(), '#offline': makeEl(), '#offlineMsg': makeEl(), '#retry': makeEl() };
   els['#offlineMsg'].textContent = 'Stream temporarily unavailable';
   els['#start'].hidden = true; els['#pill'].hidden = true; els['#offline'].hidden = true; els['#retry'].hidden = false;
   const docListeners = {};
@@ -301,75 +300,34 @@ async function loadPlayer({ native, playBehavior, withHls, android = false }) {
     pageReloads: () => pageReloads };
 }
 
-await okAsync('background button appears on tap and hides exactly five seconds later', async () => {
+await okAsync('background listening is automatic and Media Session exposes live controls', async () => {
   const t = await loadPlayer({ native: true, playBehavior: 'resolve', withHls: false });
-  assert.equal(t.els['#background'].hidden, true, 'control hidden at launch');
-  t.video.dispatch('click');
-  assert.equal(t.els['#background'].hidden, false, 'tap reveals control');
-  t.clock.advance(4999);
-  assert.equal(t.els['#background'].hidden, false, 'still visible before five seconds');
-  t.clock.advance(1);
-  assert.equal(t.els['#background'].hidden, true, 'hidden after five seconds');
-  t.video.dispatch('touchend');
-  assert.equal(t.els['#background'].hidden, false, 'touch reveals control');
-  t.clock.advance(3000);
-  t.els['#background'].click();
-  assert.equal(t.els['#background'].attrs['aria-pressed'], 'true', 'toggle still works');
-  t.clock.advance(4999);
-  assert.equal(t.els['#background'].hidden, false, 'toggle resets hide timer');
-  t.clock.advance(1);
-  assert.equal(t.els['#background'].hidden, true, 'control hides after last interaction');
-});
-
-await okAsync('background audio is opt-in; Media Session exposes live channel controls', async () => {
-  const t = await loadPlayer({ native: true, playBehavior: 'resolve', withHls: false });
-  assert.equal(t.els['#background'].attrs['aria-pressed'], undefined);
+  assert.equal(t.els['#background'], undefined, 'no redundant background toggle');
   assert.equal(t.mediaSession.metadata.title, 'EriTV Live');
   assert.equal(typeof t.actions.play, 'function');
   assert.equal(typeof t.actions.pause, 'function');
   assert.equal(t.actions.seekto, undefined, 'live TV must not expose seeking');
-  t.els['#background'].click();
-  assert.equal(t.els['#background'].attrs['aria-pressed'], 'true');
-  assert.match(t.els['#background'].textContent, /On/);
   t.actions.pause();
   assert.equal(t.video.paused, true);
-  assert.equal(t.mediaSession.playbackState, 'paused');
   t.actions.play();
   await t.tick();
   assert.equal(t.video.paused, false);
-  assert.equal(t.mediaSession.playbackState, 'playing');
-  t.els['#background'].click();
-  assert.equal(t.els['#background'].attrs['aria-pressed'], 'false');
 });
 
-await okAsync('opt-in background mode preserves healthy stream and allows background recovery', async () => {
+await okAsync('background mode is always active and preserves recovery while hidden', async () => {
   const t = await loadPlayer({ native: true, playBehavior: 'resolve', withHls: false });
   t.video.currentTime = 3;
   t.video.dispatch('timeupdate');
-  t.els['#background'].click();
   t.sandbox.document.hidden = true;
   t.sandbox.document.visibilityState = 'hidden';
   for (const fn of t.docListeners.visibilitychange || []) fn();
   assert.equal(t.video.loadCalls, 2, 'hiding page must not reload media');
-  t.clock.advance(13000); // playback has genuinely stopped advancing
+  t.clock.advance(13000);
   t.video.dispatch('error');
-  assert.equal(t.els['#pill'].hidden, false);
+  assert.equal(t.els['#pill'].hidden, false, 'background recovery remains active');
   t.clock.advance(3000);
   await t.tick();
-  assert.equal(t.video.playCalls, 2, 'background recovery still attempts playback');
-  t.sandbox.document.hidden = false;
-  t.sandbox.document.visibilityState = 'visible';
-  for (const fn of t.docListeners.visibilitychange || []) fn();
-  assert.equal(t.video.loadCalls, 4, 'foreground return does not force additional source reload');
-});
-
-await okAsync('background audio off preserves existing hidden-tab retry gating', async () => {
-  const t = await loadPlayer({ native: true, playBehavior: 'resolve', withHls: false });
-  t.sandbox.document.hidden = true;
-  t.sandbox.document.visibilityState = 'hidden';
-  for (const fn of t.docListeners.visibilitychange || []) fn();
-  t.video.dispatch('error');
-  assert.equal(t.els['#pill'].hidden, true, 'no background reconnect without opt-in');
+  assert.equal(t.video.playCalls, 2, 'background recovery attempts playback');
 });
 
 await okAsync('native engine: stream assigned, play attempted, SW registered', async () => {
