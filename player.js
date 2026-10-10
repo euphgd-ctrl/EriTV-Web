@@ -62,6 +62,8 @@ let startupAttempt = 0;
 let androidGesturePlayAttempt = false;
 let backgroundAudio = false;
 let backgroundResumePending = false;
+let controlsTimer = null;
+const CONTROLS_HIDE_MS = 5000;
 let lastStartupStage = 'not started';
 
 const OFFLINE_DEFAULT_MSG = offlineMsg.textContent;
@@ -100,6 +102,14 @@ function updateMediaSession() {
   try {
     navigator.mediaSession.playbackState = video.paused ? 'paused' : 'playing';
   } catch (e) { /* unsupported browser */ }
+}
+function revealBackgroundControl() {
+  backgroundButton.hidden = false;
+  if (controlsTimer !== null) clearTimeout(controlsTimer);
+  controlsTimer = setTimeout(function () {
+    controlsTimer = null;
+    backgroundButton.hidden = true;
+  }, CONTROLS_HIDE_MS);
 }
 function setBackgroundAudio(enabled) {
   backgroundAudio = !!enabled;
@@ -503,7 +513,15 @@ function userRetry() {
 start.addEventListener('click', userPlay);
 retry.addEventListener('click', userRetry);
 pill.addEventListener('click', userRetry);
-backgroundButton.addEventListener('click', function () { setBackgroundAudio(!backgroundAudio); });
+backgroundButton.addEventListener('click', function () {
+  setBackgroundAudio(!backgroundAudio);
+  revealBackgroundControl(); // five seconds after last interaction
+});
+// Only show the control when the viewer interacts with the picture.
+// The playback element stays untouched, preserving iOS/Android startup.
+video.addEventListener('click', revealBackgroundControl);
+video.addEventListener('touchend', revealBackgroundControl);
+backgroundButton.hidden = true;
 setupMediaSession();
 
 document.addEventListener('visibilitychange', function () {
