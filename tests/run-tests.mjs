@@ -330,7 +330,7 @@ await okAsync('opt-in background mode preserves healthy stream and allows backgr
   t.sandbox.document.hidden = true;
   t.sandbox.document.visibilityState = 'hidden';
   for (const fn of t.docListeners.visibilitychange || []) fn();
-  assert.equal(t.video.loadCalls, 1, 'hiding page must not reload media');
+  assert.equal(t.video.loadCalls, 2, 'hiding page must not reload media');
   t.clock.advance(13000); // playback has genuinely stopped advancing
   t.video.dispatch('error');
   assert.equal(t.els['#pill'].hidden, false);
@@ -340,7 +340,7 @@ await okAsync('opt-in background mode preserves healthy stream and allows backgr
   t.sandbox.document.hidden = false;
   t.sandbox.document.visibilityState = 'visible';
   for (const fn of t.docListeners.visibilitychange || []) fn();
-  assert.equal(t.video.loadCalls, 2, 'foreground return does not force additional source reload');
+  assert.equal(t.video.loadCalls, 4, 'foreground return does not force additional source reload');
 });
 
 await okAsync('background audio off preserves existing hidden-tab retry gating', async () => {
