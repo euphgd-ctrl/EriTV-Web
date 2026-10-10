@@ -33,6 +33,7 @@ const pill = document.querySelector('#pill');
 const offline = document.querySelector('#offline');
 const offlineMsg = document.querySelector('#offlineMsg');
 const retry = document.querySelector('#retry');
+const backgroundButton = document.querySelector('#background');
 
 let engine = null; // 'native' | 'hls' | null
 let hls = null;
@@ -59,6 +60,8 @@ let startupRecoveryTimer = null;
 let startupSession = 0;
 let startupAttempt = 0;
 let androidGesturePlayAttempt = false;
+let backgroundAudio = false;
+let backgroundResumePending = false;
 let lastStartupStage = 'not started';
 
 const OFFLINE_DEFAULT_MSG = offlineMsg.textContent;
@@ -72,7 +75,7 @@ function showStartupState() {
   status('Connecting: ' + startupStage + ' · Tap to retry');
 }
 function startupTimeout() {
-  if (!isAndroid || engine !== 'hls' || !requested || document.hidden || hasProgress ||
+  if (!isAndroid || engine !== 'hls' || !requested || blockedByVisibility() || hasProgress ||
       gestureRequired || retriesExpired || timer !== null) return;
   const failedAt = startupFailureLabel();
   startupIssue = failedAt;
@@ -86,6 +89,59 @@ function startupTimeout() {
   schedule('Startup stalled at ' + startupIssue);
 }
 function status(text) { pill.textContent = text; pill.hidden = !text; }
+function mayRunInBackground() {
+  return backgroundAudio && requested;
+}
+function blockedByVisibility() {
+  return document.hidden && !mayRunInBackground();
+}
+function updateMediaSession() {
+  if (!('mediaSession' in navigator)) return;
+  try {
+    navigator.mediaSession.playbackState = video.paused ? 'paused' : 'playing';
+  } catch (e) { /* unsupported browser */ }
+}
+function setBackgroundAudio(enabled) {
+  backgroundAudio = !!enabled;
+  backgroundButton.setAttribute('aria-pressed', String(backgroundAudio));
+  backgroundButton.textContent = backgroundAudio ? '♫ Background audio: On' : '♫ Background audio: Off';
+  if (backgroundAudio) {
+    // Background audio must not keep the display awake.
+    if (wakeLock) { try { wakeLock.release(); } catch (e) {} wakeLock = null; }
+    if (requested && !video.paused) updateMediaSession();
+  } else if (!document.hidden && !video.paused) {
+    requestWake();
+  }
+}
+function setupMediaSession() {
+  if (!('mediaSession' in navigator)) return;
+  try {
+    if ('MediaMetadata' in window) {
+      navigator.mediaSession.metadata = new window.MediaMetadata({
+        title: 'EriTV Live', artist: 'EriTV', album: 'Live television',
+        artwork: [
+          { src: new URL('./icons/icon-192.png', document.baseURI).href, sizes: '192x192', type: 'image/png' },
+          { src: new URL('./icons/icon-512.png', document.baseURI).href, sizes: '512x512', type: 'image/png' }
+        ]
+      });
+    }
+    navigator.mediaSession.setActionHandler('play', function () {
+      if (!requested || engine === null) return;
+      if (!hls && engine === 'hls') attachStream();
+      play();
+    });
+    navigator.mediaSession.setActionHandler('pause', function () {
+      video.pause();
+      updateMediaSession();
+    });
+    // This is a LIVE channel: there is no meaningful seek or next track.
+    navigator.mediaSession.setActionHandler('stop', function () {
+      video.pause();
+      updateMediaSession();
+    });
+    updateMediaSession();
+  } catch (e) { /* Media Session support varies by OS/browser */ }
+}
 function healthyPlayback() {
   return hasProgress && !video.paused && !video.seeking && !video.error &&
     Date.now() - lastProgress < RECENT_PROGRESS_MS;
@@ -228,11 +284,12 @@ function recovered() {
   if (!healthySince) healthySince = Date.now();
   lastProgress = Date.now();
   requestWake();
+  updateMediaSession();
 }
 
 async function requestWake() {
   try {
-    if ('wakeLock' in navigator && document.visibilityState === 'visible' && !video.paused && !wakeLock) {
+    if ('wakeLock' in navigator && document.visibilityState === 'visible' && !backgroundAudio && !video.paused && !wakeLock) {
       wakeLock = await navigator.wakeLock.request('screen');
       wakeLock.addEventListener('release', function () { wakeLock = null; });
     }
@@ -240,13 +297,14 @@ async function requestWake() {
 }
 
 async function play() {
-  if (!requested || document.hidden || engine === null) return;
+  if (!requested || blockedByVisibility() || engine === null) return;
   const generation = playGeneration;
   try {
     await video.play();
     if (generation !== playGeneration) return;
     gestureRequired = false;
     start.hidden = true;
+    updateMediaSession();
   } catch (e) {
     if (generation !== playGeneration || !e) return;
     if (e.name === 'NotAllowedError') {
@@ -286,7 +344,7 @@ function classifyNativeError() {
 }
 
 function schedule(reason) {
-  if (!requested || document.hidden || gestureRequired || retriesExpired ||
+  if (!requested || blockedByVisibility() || gestureRequired || retriesExpired ||
       timer !== null || !offline.hidden || healthyPlayback()) return;
   failureReason = reason || failureReason;
   healthySince = 0;
@@ -309,7 +367,7 @@ function schedule(reason) {
   const delay = RETRY_DELAYS[Math.min(attempts++, RETRY_DELAYS.length - 1)];
   timer = setTimeout(function () {
     timer = null;
-    if (!requested || document.hidden || retriesExpired) return;
+    if (!requested || blockedByVisibility() || retriesExpired) return;
     if (healthyPlayback()) { recovered(); return; }
     attachStream();
   }, delay);
@@ -336,7 +394,9 @@ video.addEventListener('playing', function () {
   // connecting UI once timeupdate actually advances the picture.
   if (hasProgress) recovered();
   start.hidden = true;
+  updateMediaSession();
 });
+video.addEventListener('pause', updateMediaSession);
 video.addEventListener('timeupdate', function () {
   if (!video.paused && Math.abs(video.currentTime - lastTime) > 0.25) {
     lastTime = video.currentTime;
@@ -353,7 +413,7 @@ video.addEventListener('timeupdate', function () {
 });
 video.addEventListener('waiting', function () {
   setTimeout(function () {
-    if (!video.paused && video.readyState < 3 && !document.hidden && !timer &&
+    if (!video.paused && video.readyState < 3 && !blockedByVisibility() && !timer &&
         !retriesExpired) status('Buffering…');
   }, BUFFERING_HINT_MS);
 });
@@ -373,7 +433,7 @@ video.addEventListener('stalled', function () {
 });
 
 setInterval(function () {
-  if (document.hidden || gestureRequired || !requested || engine === null || retriesExpired) return;
+  if (blockedByVisibility() || gestureRequired || !requested || engine === null || retriesExpired) return;
   const now = Date.now();
   if (healthyPlayback()) {
     if (healthySince && now - healthySince >= HEALTHY_RESET_MS) {
@@ -443,23 +503,39 @@ function userRetry() {
 start.addEventListener('click', userPlay);
 retry.addEventListener('click', userRetry);
 pill.addEventListener('click', userRetry);
+backgroundButton.addEventListener('click', function () { setBackgroundAudio(!backgroundAudio); });
+setupMediaSession();
 
 document.addEventListener('visibilitychange', function () {
-  if (document.hidden) { clearTimer(); clearStartupTimer(); status(''); healthySince = 0; }
-  else {
+  if (document.hidden) {
+    if (wakeLock) { try { wakeLock.release(); } catch (e) {} wakeLock = null; }
+    if (mayRunInBackground()) {
+      // Do not tear down a healthy HLS session merely because the screen locks.
+      // Background playback is OS-controlled; browsers may still suspend it.
+      backgroundResumePending = true;
+      updateMediaSession();
+      return;
+    }
+    clearTimer(); clearStartupTimer(); status(''); healthySince = 0;
+  } else {
+    if (!requested) return; // returning must not bypass Android's Play button
+    if (backgroundResumePending) {
+      backgroundResumePending = false;
+      // No restart on foregrounding a stream that is still progressing.
+      if (healthyPlayback()) { requestWake(); return; }
+    }
     lastProgress = Date.now();
-    if (!requested) return; // returning to the tab must not bypass Android's Play button
-    if (isAndroid && engine === 'hls' && !hasProgress) { attachStream(); return; }
+    if (isAndroid && engine === 'hls' && !hasProgress && !hls) { attachStream(); return; }
     if (!gestureRequired) {
       if (video.error || video.ended || (engine === 'hls' && !hls)) attachStream();
-      else play();
+      else if (video.paused) play();
     }
     requestWake();
   }
 });
 
 window.addEventListener('online', function () {
-  if (!requested || document.hidden || gestureRequired || engine === null || retriesExpired) return;
+  if (!requested || blockedByVisibility() || gestureRequired || engine === null || retriesExpired) return;
   clearTimer();
   if (healthyPlayback()) { requestWake(); return; } // don't interrupt healthy playback on spurious online events
   attachStream();
