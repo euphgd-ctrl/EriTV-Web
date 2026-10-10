@@ -42,6 +42,28 @@ The publisher's sliding live playlist also limits how much future video can
 be buffered, regardless of configured target lengths. The viewer cannot
 bypass ISP/CDN restrictions or guarantee the third-party stream stays online.
 
+## Background listening and lock-screen controls
+
+- Tap **♫ Background audio: Off** to enable background listening. This is
+  **opt-in**; normal playback stays unchanged when the switch is off.
+- The player keeps its existing HLS connection when the tab is hidden or the
+  screen locks and background audio is enabled. It releases screen wake locks
+  to allow the phone to sleep. Lock-screen metadata and play/pause actions are
+  registered with the browser Media Session API where supported.
+- A live TV video stream is **not a separate audio-only feed**: video may still
+  be downloaded and decoded while the screen is off, depending on browser.
+  This feature is about listening without keeping the screen visible; it does
+  not guarantee reduced mobile data usage.
+- **Platform limitation:** Android Chrome and installed PWAs may allow media
+  playback in the background, but device power policies can still interrupt it.
+  iPhone Safari may suspend background video playback on screen lock even
+  with Media Session registered. Neither iOS nor Android permits a website
+  to guarantee uninterrupted locked-screen playback or force system controls.
+  If iOS suspends the stream, native-app packaging or a dedicated audio stream
+  may be necessary.
+- Test on physical phones: play, enable background audio, switch apps, lock
+  screen, use lock-screen pause/play, unlock and verify video continues.
+
 ## Progressive web app (PWA)
 
 - HTTPS GitHub Pages, standalone manifest, iPhone/Android icons.
