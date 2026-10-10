@@ -33,7 +33,6 @@ const pill = document.querySelector('#pill');
 const offline = document.querySelector('#offline');
 const offlineMsg = document.querySelector('#offlineMsg');
 const retry = document.querySelector('#retry');
-const backgroundButton = document.querySelector('#background');
 
 let engine = null; // 'native' | 'hls' | null
 let hls = null;
@@ -60,10 +59,7 @@ let startupRecoveryTimer = null;
 let startupSession = 0;
 let startupAttempt = 0;
 let androidGesturePlayAttempt = false;
-let backgroundAudio = false;
 let backgroundResumePending = false;
-let controlsTimer = null;
-const CONTROLS_HIDE_MS = 5000;
 let lastStartupStage = 'not started';
 
 const OFFLINE_DEFAULT_MSG = offlineMsg.textContent;
@@ -92,7 +88,9 @@ function startupTimeout() {
 }
 function status(text) { pill.textContent = text; pill.hidden = !text; }
 function mayRunInBackground() {
-  return backgroundAudio && requested;
+  // Background listening is the default. The OS/browser remains free to
+  // pause media from its own controls or power-management policy.
+  return requested;
 }
 function blockedByVisibility() {
   return document.hidden && !mayRunInBackground();
@@ -102,26 +100,6 @@ function updateMediaSession() {
   try {
     navigator.mediaSession.playbackState = video.paused ? 'paused' : 'playing';
   } catch (e) { /* unsupported browser */ }
-}
-function revealBackgroundControl() {
-  backgroundButton.hidden = false;
-  if (controlsTimer !== null) clearTimeout(controlsTimer);
-  controlsTimer = setTimeout(function () {
-    controlsTimer = null;
-    backgroundButton.hidden = true;
-  }, CONTROLS_HIDE_MS);
-}
-function setBackgroundAudio(enabled) {
-  backgroundAudio = !!enabled;
-  backgroundButton.setAttribute('aria-pressed', String(backgroundAudio));
-  backgroundButton.textContent = backgroundAudio ? '♫ Background audio: On' : '♫ Background audio: Off';
-  if (backgroundAudio) {
-    // Background audio must not keep the display awake.
-    if (wakeLock) { try { wakeLock.release(); } catch (e) {} wakeLock = null; }
-    if (requested && !video.paused) updateMediaSession();
-  } else if (!document.hidden && !video.paused) {
-    requestWake();
-  }
 }
 function setupMediaSession() {
   if (!('mediaSession' in navigator)) return;
@@ -299,7 +277,7 @@ function recovered() {
 
 async function requestWake() {
   try {
-    if ('wakeLock' in navigator && document.visibilityState === 'visible' && !backgroundAudio && !video.paused && !wakeLock) {
+    if ('wakeLock' in navigator && document.visibilityState === 'visible' && !video.paused && !wakeLock) {
       wakeLock = await navigator.wakeLock.request('screen');
       wakeLock.addEventListener('release', function () { wakeLock = null; });
     }
@@ -513,15 +491,6 @@ function userRetry() {
 start.addEventListener('click', userPlay);
 retry.addEventListener('click', userRetry);
 pill.addEventListener('click', userRetry);
-backgroundButton.addEventListener('click', function () {
-  setBackgroundAudio(!backgroundAudio);
-  revealBackgroundControl(); // five seconds after last interaction
-});
-// Only show the control when the viewer interacts with the picture.
-// The playback element stays untouched, preserving iOS/Android startup.
-video.addEventListener('click', revealBackgroundControl);
-video.addEventListener('touchend', revealBackgroundControl);
-backgroundButton.hidden = true;
 setupMediaSession();
 
 document.addEventListener('visibilitychange', function () {
