@@ -68,6 +68,7 @@ for (const [name, needle] of [
   ['hls.js integrity hash', 'integrity="sha384-'],
   ['player.js script', 'src="./player.js"'],
   ['offline message element', 'id="offlineMsg"'],
+  ['background audio toggle', 'id="background"'],
 ]) ok('html has ' + name, () => assert.ok(html.includes(needle), needle));
 
 /* ---------------- 4. service worker routing ---------------- */
@@ -216,7 +217,8 @@ function makeClock() {
 function makeEl() {
   const listeners = {};
   return {
-    hidden: true, textContent: '',
+    hidden: true, textContent: '', attrs: {},
+    setAttribute: function (name, value) { this.attrs[name] = value; },
     addEventListener: (t, f) => { (listeners[t] = listeners[t] || []).push(f); },
     dispatch: (t) => { (listeners[t] || []).forEach((f) => f({ type: t })); },
     click: () => { (listeners.click || []).forEach((f) => f({ type: 'click' })); },
@@ -260,24 +262,29 @@ const tick = async () => { await new Promise((r) => setImmediate(r)); await new 
 async function loadPlayer({ native, playBehavior, withHls, android = false }) {
   const clock = makeClock();
   const video = makeVideo(native, playBehavior);
-  const els = { '#video': video, '#start': makeEl(), '#pill': makeEl(), '#offline': makeEl(), '#offlineMsg': makeEl(), '#retry': makeEl() };
+  const els = { '#video': video, '#start': makeEl(), '#pill': makeEl(), '#offline': makeEl(), '#offlineMsg': makeEl(), '#retry': makeEl(), '#background': makeEl() };
   els['#offlineMsg'].textContent = 'Stream temporarily unavailable';
   els['#start'].hidden = true; els['#pill'].hidden = true; els['#offline'].hidden = true; els['#retry'].hidden = false;
   const docListeners = {};
   const winListeners = {};
   const registeredSW = [];
   let pageReloads = 0;
+  const actions = {};
+  const mediaSession = { playbackState: 'none', metadata: null,
+    setActionHandler: (action, fn) => { actions[action] = fn; } };
   const sandbox = {
     document: {
       querySelector: (s) => els[s],
-      hidden: false, visibilityState: 'visible',
+      hidden: false, visibilityState: 'visible', baseURI: 'https://example.test/EriTV-Web/',
       addEventListener: (t, f) => { (docListeners[t] = docListeners[t] || []).push(f); },
     },
     window: {
       addEventListener: (t, f) => { (winListeners[t] = winListeners[t] || []).push(f); },
       location: { reload: () => { pageReloads++; } },
+      MediaMetadata: class { constructor(data) { Object.assign(this, data); } },
     },
-    navigator: { userAgent: android ? 'Mozilla/5.0 (Linux; Android 16) Chrome/140' : 'Mozilla/5.0 (iPhone)', serviceWorker: { register: async (u) => { registeredSW.push(u); } } },
+    URL,
+    navigator: { mediaSession, userAgent: android ? 'Mozilla/5.0 (Linux; Android 16) Chrome/140' : 'Mozilla/5.0 (iPhone)', serviceWorker: { register: async (u) => { registeredSW.push(u); } } },
     setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout,
     setInterval: clock.setInterval, clearInterval: clock.clearInterval,
     Date: { now: clock.now },
@@ -290,9 +297,60 @@ async function loadPlayer({ native, playBehavior, withHls, android = false }) {
   // fire window load -> service worker registration
   (winListeners.load || []).forEach((f) => f());
   await tick();
-  return { clock, video, els, docListeners, winListeners, registeredSW, Hls, tick,
+  return { clock, video, els, docListeners, winListeners, registeredSW, Hls, tick, mediaSession, actions, sandbox,
     pageReloads: () => pageReloads };
 }
+
+await okAsync('background audio is opt-in; Media Session exposes live channel controls', async () => {
+  const t = await loadPlayer({ native: true, playBehavior: 'resolve', withHls: false });
+  assert.equal(t.els['#background'].attrs['aria-pressed'], undefined);
+  assert.equal(t.mediaSession.metadata.title, 'EriTV Live');
+  assert.equal(typeof t.actions.play, 'function');
+  assert.equal(typeof t.actions.pause, 'function');
+  assert.equal(t.actions.seekto, undefined, 'live TV must not expose seeking');
+  t.els['#background'].click();
+  assert.equal(t.els['#background'].attrs['aria-pressed'], 'true');
+  assert.match(t.els['#background'].textContent, /On/);
+  t.actions.pause();
+  assert.equal(t.video.paused, true);
+  assert.equal(t.mediaSession.playbackState, 'paused');
+  t.actions.play();
+  await t.tick();
+  assert.equal(t.video.paused, false);
+  assert.equal(t.mediaSession.playbackState, 'playing');
+  t.els['#background'].click();
+  assert.equal(t.els['#background'].attrs['aria-pressed'], 'false');
+});
+
+await okAsync('opt-in background mode preserves healthy stream and allows background recovery', async () => {
+  const t = await loadPlayer({ native: true, playBehavior: 'resolve', withHls: false });
+  t.video.currentTime = 3;
+  t.video.dispatch('timeupdate');
+  t.els['#background'].click();
+  t.sandbox.document.hidden = true;
+  t.sandbox.document.visibilityState = 'hidden';
+  for (const fn of t.docListeners.visibilitychange || []) fn();
+  assert.equal(t.video.loadCalls, 2, 'hiding page must not reload media');
+  t.clock.advance(13000); // playback has genuinely stopped advancing
+  t.video.dispatch('error');
+  assert.equal(t.els['#pill'].hidden, false);
+  t.clock.advance(3000);
+  await t.tick();
+  assert.equal(t.video.playCalls, 2, 'background recovery still attempts playback');
+  t.sandbox.document.hidden = false;
+  t.sandbox.document.visibilityState = 'visible';
+  for (const fn of t.docListeners.visibilitychange || []) fn();
+  assert.equal(t.video.loadCalls, 4, 'foreground return does not force additional source reload');
+});
+
+await okAsync('background audio off preserves existing hidden-tab retry gating', async () => {
+  const t = await loadPlayer({ native: true, playBehavior: 'resolve', withHls: false });
+  t.sandbox.document.hidden = true;
+  t.sandbox.document.visibilityState = 'hidden';
+  for (const fn of t.docListeners.visibilitychange || []) fn();
+  t.video.dispatch('error');
+  assert.equal(t.els['#pill'].hidden, true, 'no background reconnect without opt-in');
+});
 
 await okAsync('native engine: stream assigned, play attempted, SW registered', async () => {
   const t = await loadPlayer({ native: true, playBehavior: 'resolve', withHls: false });
