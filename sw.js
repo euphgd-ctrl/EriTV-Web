@@ -12,7 +12,7 @@
  *  - Other same-origin GETs: stale-while-revalidate -- serve the cached copy
  *    instantly, refresh it in the background for next time.
  */
-const CACHE = 'eritv-shell-v6';
+const CACHE = 'eritv-shell-v7';
 const ASSETS = [
   './',
   './index.html',

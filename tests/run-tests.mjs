@@ -301,6 +301,26 @@ async function loadPlayer({ native, playBehavior, withHls, android = false }) {
     pageReloads: () => pageReloads };
 }
 
+await okAsync('background button appears on tap and hides exactly five seconds later', async () => {
+  const t = await loadPlayer({ native: true, playBehavior: 'resolve', withHls: false });
+  assert.equal(t.els['#background'].hidden, true, 'control hidden at launch');
+  t.video.dispatch('click');
+  assert.equal(t.els['#background'].hidden, false, 'tap reveals control');
+  t.clock.advance(4999);
+  assert.equal(t.els['#background'].hidden, false, 'still visible before five seconds');
+  t.clock.advance(1);
+  assert.equal(t.els['#background'].hidden, true, 'hidden after five seconds');
+  t.video.dispatch('touchend');
+  assert.equal(t.els['#background'].hidden, false, 'touch reveals control');
+  t.clock.advance(3000);
+  t.els['#background'].click();
+  assert.equal(t.els['#background'].attrs['aria-pressed'], 'true', 'toggle still works');
+  t.clock.advance(4999);
+  assert.equal(t.els['#background'].hidden, false, 'toggle resets hide timer');
+  t.clock.advance(1);
+  assert.equal(t.els['#background'].hidden, true, 'control hides after last interaction');
+});
+
 await okAsync('background audio is opt-in; Media Session exposes live channel controls', async () => {
   const t = await loadPlayer({ native: true, playBehavior: 'resolve', withHls: false });
   assert.equal(t.els['#background'].attrs['aria-pressed'], undefined);
