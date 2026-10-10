@@ -44,16 +44,9 @@ bypass ISP/CDN restrictions or guarantee the third-party stream stays online.
 
 ## Background listening and lock-screen controls
 
-- Tap **♫ Background audio: Off** to enable background listening. This is
-  **opt-in**; normal playback stays unchanged when the switch is off.
-- The player keeps its existing HLS connection when the tab is hidden or the
-  screen locks and background audio is enabled. It releases screen wake locks
-  to allow the phone to sleep. Lock-screen metadata and play/pause actions are
-  registered with the browser Media Session API where supported.
-- A live TV video stream is **not a separate audio-only feed**: video may still
-  be downloaded and decoded while the screen is off, depending on browser.
-  This feature is about listening without keeping the screen visible; it does
-  not guarantee reduced mobile data usage.
+- Background listening is enabled automatically whenever EriTV is playing; there is no in-player toggle.
+- The player keeps its existing HLS connection when the tab is hidden or the screen locks. It releases screen wake locks to allow the phone to sleep. Lock-screen metadata and play/pause actions are registered with the browser Media Session API where supported.
+- A live TV video stream is **not a separate audio-only feed**: video may still be downloaded and decoded while the screen is off, depending on browser. This feature is about listening without keeping the screen visible; it does not guarantee reduced mobile data usage.
 - **Platform limitation:** Android Chrome and installed PWAs may allow media
   playback in the background, but device power policies can still interrupt it.
   iPhone Safari may suspend background video playback on screen lock even
