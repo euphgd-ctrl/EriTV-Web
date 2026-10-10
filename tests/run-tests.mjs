@@ -331,6 +331,7 @@ await okAsync('opt-in background mode preserves healthy stream and allows backgr
   t.sandbox.document.visibilityState = 'hidden';
   for (const fn of t.docListeners.visibilitychange || []) fn();
   assert.equal(t.video.loadCalls, 1, 'hiding page must not reload media');
+  t.clock.advance(13000); // playback has genuinely stopped advancing
   t.video.dispatch('error');
   assert.equal(t.els['#pill'].hidden, false);
   t.clock.advance(3000);
