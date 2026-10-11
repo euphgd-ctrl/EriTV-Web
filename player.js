@@ -108,8 +108,8 @@ function setupMediaSession() {
       navigator.mediaSession.metadata = new window.MediaMetadata({
         title: 'EriTV Live', artist: 'EriTV', album: 'Live television',
         artwork: [
-          { src: new URL('./icons/icon-192.png', document.baseURI).href, sizes: '192x192', type: 'image/png' },
-          { src: new URL('./icons/icon-512.png', document.baseURI).href, sizes: '512x512', type: 'image/png' }
+          { src: new URL('./icons/icon-192.png?v=flag2', document.baseURI).href, sizes: '192x192', type: 'image/png' },
+          { src: new URL('./icons/icon-512.png?v=flag2', document.baseURI).href, sizes: '512x512', type: 'image/png' }
         ]
       });
     }
