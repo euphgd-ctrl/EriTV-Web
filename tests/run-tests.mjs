@@ -46,7 +46,7 @@ ok('manifest parses with required fields', () => {
 });
 ok('manifest icons exist and match declared sizes', () => {
   for (const icon of manifest.icons) {
-    const { w, h, bytes } = pngSize(icon.src);
+    const { w, h, bytes } = pngSize(icon.src.split('?')[0]);
     assert.ok(bytes > 500, icon.src + ' suspiciously small');
     assert.equal(icon.sizes, w + 'x' + h, icon.src);
   }
