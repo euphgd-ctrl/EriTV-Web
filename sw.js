@@ -12,7 +12,7 @@
  *  - Other same-origin GETs: stale-while-revalidate -- serve the cached copy
  *    instantly, refresh it in the background for next time.
  */
-const CACHE = 'eritv-shell-v8';
+const CACHE = 'eritv-shell-v9';
 const ASSETS = [
   './',
   './index.html',
@@ -20,6 +20,7 @@ const ASSETS = [
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png',
+  './icons/favicon-32.png',
   './icons/apple-touch-icon.png'
 ];
 const NEVER_CACHE = /\.m3u8($|\?)|\.ts($|\?)|\.m4s($|\?)|\.mpd($|\?)/i;
