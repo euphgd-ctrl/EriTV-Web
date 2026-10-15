@@ -7,12 +7,20 @@ This is an **unofficial** viewer and does not claim broadcaster affiliation.
 Any redistribution, use of the broadcaster's stream, name or imagery must comply
 with the broadcaster's permissions and applicable law.
 
+## Linux Mastery Lab PWA
+
+Installable Linux Mastery Lab frontend: [open the PWA](https://euphgd-ctrl.github.io/EriTV-Web/linuxlab/). Add it to the iPhone or Android home screen from the browser’s Share/menu. The static app and offline lessons are public; live VM actions and SSH terminal require access to the private lab controller over Wi-Fi or VPN.
+
 ## Playback
 
 - **iPhone / iPad Safari:** native HLS via `video.canPlayType`. Sound-on
   autoplay may require tapping **Tap to Watch**, and the tap must call
   `video.play()` on the existing element without tearing down its source.
-- **Android Chrome (browser or installed PWA):** **always uses hls.js/MSE**, even\n  if Chrome misleadingly claims native HLS support via `canPlayType`. This\n  fixes the native black-screen/retrying-idle path. On the first Play tap,\n  playback is requested synchronously to preserve the trusted user gesture,\n  without waiting for the manifest to finish loading. Initially shows a large
+- **Android Chrome (browser or installed PWA):** **always uses hls.js/MSE**, even
+  if Chrome misleadingly claims native HLS support via `canPlayType`. This
+  fixes the native black-screen/retrying-idle path. On the first Play tap,
+  playback is requested synchronously to preserve the trusted user gesture,
+  without waiting for the manifest to finish loading. Initially shows a large
   **▶ Play EriTV** button. The HLS manifest and player are **not initialized
   before that tap**, which avoids unreliable sound-on autoplay and unlocks
   the media gesture. A blocked play attempt offers another tap without
@@ -50,12 +58,12 @@ bypass ISP/CDN restrictions or guarantee the third-party stream stays online.
 - **Platform limitation:** Android Chrome and installed PWAs may allow media
   playback in the background, but device power policies can still interrupt it.
   iPhone Safari may suspend background video playback on screen lock even
-  with Media Session registered. Neither iOS nor Android permits a website
-  to guarantee uninterrupted locked-screen playback or force system controls.
+  with Media Session registered. Neither iOS nor Android permits a website to
+  guarantee uninterrupted locked-screen playback or force system controls.
   If iOS suspends the stream, native-app packaging or a dedicated audio stream
   may be necessary.
-- Test on physical phones: play, enable background audio, switch apps, lock
-  screen, use lock-screen pause/play, unlock and verify video continues.
+- Test on physical phones: play, switch apps, lock screen, use lock-screen
+  pause/play, unlock and verify video continues.
 
 ## Progressive web app (PWA)
 
@@ -64,7 +72,7 @@ bypass ISP/CDN restrictions or guarantee the third-party stream stays online.
   bypass it completely, preventing stale live playlists/segments.
 - HTML navigation and `player.js` use network-first with offline fallback,
   ensuring bug fixes are served on the next online reload.
-- All other same-origin app-shell assets use stale-while-revalidate.
+- Other same-origin app-shell assets use stale-while-revalidate.
 - Screen wake lock is requested where browser support and permissions allow it.
 
 ## Tests and publishing
@@ -79,9 +87,9 @@ GitHub Actions runs the syntax and regression tests on pushes and pull requests
 (`.github/workflows/player-tests.yml`). Coverage includes native and MSE
 engine selection, Safari autoplay gesture, Android first-tap behavior,
 Android tab/network gating, stuck-but-buffered sessions, immediate manual
-reconnection, recovery, retry timing, offline PWA routing, icons and manifest. `tests/browser-smoke.mjs` is an optional
-sandbox-specific Chromium network smoke test, **not** a substitute for actual
-iPhone/Android playback checks.
+reconnection, recovery, retry timing, offline PWA routing, icons and manifest.
+`tests/browser-smoke.mjs` is an optional sandbox-specific Chromium network
+smoke test, **not** a substitute for actual iPhone/Android playback checks.
 
 GitHub Pages publishes from `main` (repository root). Development changes
 should first pass on a branch before merging; GitHub Pages then deploys the
