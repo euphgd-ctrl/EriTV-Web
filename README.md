@@ -86,8 +86,3 @@ iPhone/Android playback checks.
 GitHub Pages publishes from `main` (repository root). Development changes
 should first pass on a branch before merging; GitHub Pages then deploys the
 same static files. No build step is required.
-
-
-## Linux Mastery Lab PWA
-
-The separate Linux learning app is available at [Linux Mastery Lab](https://euphgd-ctrl.github.io/EriTV-Web/linuxlab/). It installs from a phone browser and bundles its lessons for offline study. The lab controller and VM access remain private.
