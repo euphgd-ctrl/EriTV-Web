@@ -127,7 +127,7 @@ console.log('[service worker]');
       await p;
       const names = await globalThis.caches.keys();
       assert.ok(!names.includes('eritv-shell-v1'));
-      assert.ok(names.includes('linux-mastery-lab-pwa-v1'), 'another app cache must be preserved');
+      assert.ok(names.includes('another-app-shell-v1'), 'another app cache must be preserved');
       assert.equal(names.length, 2);
     });
 
