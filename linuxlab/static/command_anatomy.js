@@ -5,7 +5,8 @@
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const state = {task:null, data:null, progress:null, selected:'', mode:'', host:'', capstoneHost:'',
     placed:[], feedback:null, hints:[], retryFeedback:null, capstoneFeedback:null, capstoneHints:[],
-    comparisons:{}, revealCommand:false, revealCapstone:false};
+    comparisons:{}, revealCommand:false, revealCapstone:false, error:null,
+    hintsComplete:false, capstoneHintsComplete:false, identityWarning:'',storageWarning:''};
   const hosts = ['workstation','servera','serverb'];
   const modeFor = guidance => guidance==='independent'?'type':guidance==='supported'?'blanks':'tokens';
   const guidanceLabel = value => value==='independent'?'Independent mastery':value==='supported'?'Supported practice':'Guided learning';
@@ -14,33 +15,46 @@
     missing_required_operation:'Missing required operation',dependency_error:'Dependency or sequencing error',
     persistence_error:'Persistence-related error',unsupported:'Unable to verify this command variation.'}[value]||'Unable to verify this command variation.');
   let memoryLearner = '';
+  const UUID_RE=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const validUuid = value => typeof value==='string'&&UUID_RE.test(value);
+  function createUuid(){
+    if(root.crypto&&typeof root.crypto.randomUUID==='function') return root.crypto.randomUUID().toLowerCase();
+    if(root.crypto&&typeof root.crypto.getRandomValues==='function'){
+      const bytes=new Uint8Array(16);root.crypto.getRandomValues(bytes);
+      bytes[6]=(bytes[6]&0x0f)|0x40;bytes[8]=(bytes[8]&0x3f)|0x80;
+      const hex=Array.from(bytes,x=>x.toString(16).padStart(2,'0')).join('');
+      return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{
+      const r=Math.random()*16|0;return (c==='x'?r:(r&3|8)).toString(16);
+    });
+  }
   const getLearnerId = () => {
     const key='lml-command-anatomy-learner-v1';
     try{
       let value=localStorage.getItem(key);
-      if(!value){
-        value=(root.crypto&&root.crypto.randomUUID)?root.crypto.randomUUID():
-          'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{
-            const r=Math.random()*16|0; return (c==='x'?r:(r&3|8)).toString(16);
-          });
+      if(!validUuid(value)){
+        value=createUuid();
+        if(!validUuid(value)) throw new Error('Could not create a valid learner ID.');
         localStorage.setItem(key,value);
       }
-      return value;
+      memoryLearner=value.toLowerCase();
+      state.identityWarning='';
+      return memoryLearner;
     }catch(e){
-      // Keep a one-page identity if browser storage is disabled; never fall
-      // back to a shared, predictable learner key.
-      if(!memoryLearner) memoryLearner=(root.crypto&&root.crypto.randomUUID)?root.crypto.randomUUID():
-        'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return (c==='x'?r:(r&3|8)).toString(16);});
+      if(!validUuid(memoryLearner)) memoryLearner=createUuid();
+      state.identityWarning='This browser is blocking local storage. Your learner identity and drafts may not survive a reload.';
       return memoryLearner;
     }
   };
   const headers = () => ({'Content-Type':'application/json','X-LML-Learner':getLearnerId()});
   const storageKey = (tid,id,mode) => `lml-ca-draft-v1:${tid}:${id}:${mode}`;
+  function storageUnavailable(){state.storageWarning='This browser could not save your latest practice draft or selection. Check available site storage and try again.';}
   function saveDraft(id, mode, value){
-    try { localStorage.setItem(storageKey(state.task,id,mode), value); } catch(e) {}
+    try { localStorage.setItem(storageKey(state.task,id,mode), value); } catch(e) { storageUnavailable(); }
   }
   function getDraft(id, mode){
-    try { return localStorage.getItem(storageKey(state.task,id,mode))||''; } catch(e) { return ''; }
+    try { return localStorage.getItem(storageKey(state.task,id,mode))||''; } catch(e) { storageUnavailable(); return ''; }
   }
   function restorePlaced(command){
     try{
@@ -52,14 +66,70 @@
     try{const saved=JSON.parse(getDraft(id,'hint-list')||'[]');return Array.isArray(saved)?saved.filter(x=>typeof x==='string'):[];}
     catch(e){return [];}
   }
-  function saveCapstone(value){ try{localStorage.setItem(storageKey(state.task,'capstone','type'),value);}catch(e){} }
+  function saveCapstone(value){ try{localStorage.setItem(storageKey(state.task,'capstone','type'),value);}catch(e){storageUnavailable();} }
   function getCapstone(){ return getDraft('capstone','type'); }
   function conceptRecord(conceptId){
     return (state.progress?.concepts||[]).find(x=>x.concept_id===conceptId)||null;
   }
+  function parseJsonField(value,label){
+    if(typeof value!=='string') return value;
+    try{return JSON.parse(value);}catch(_){throw new Error(`${label} contains invalid JSON.`);}
+  }
+  function asBoolean(value,label){
+    if(value===true||value===1||value==='1') return true;
+    if(value===false||value===0||value==='0'||value==null) return false;
+    throw new Error(`${label} must be a boolean or 0/1 flag.`);
+  }
+  function asCount(value,label){
+    const number=Number(value);
+    if(!Number.isFinite(number)||number<0) throw new Error(`${label} must be a non-negative number.`);
+    return number;
+  }
+  function normalizeProgress(input){
+    const progress=parseJsonField(input,'Progress response');
+    if(!progress||typeof progress!=='object'||Array.isArray(progress)) throw new Error('Progress response must be an object.');
+    const concepts=parseJsonField(progress.concepts??[],'Progress concepts');
+    if(!Array.isArray(concepts)) throw new Error('Progress concepts must be an array.');
+    const boolFields=['independent_success','hinted_success','comparison_correct','retention_success','capstone_success','capstone_independent_success'];
+    const countFields=['attempts','successes','hint_count','hint_cursor','attempt_hints','variation_successes'];
+    const normalizedConcepts=concepts.map((raw,index)=>{
+      const item=parseJsonField(raw,`Progress concept ${index+1}`);
+      if(!item||typeof item!=='object'||Array.isArray(item)) throw new Error(`Progress concept ${index+1} must be an object.`);
+      const result={...item};
+      result.misconception_counts=parseJsonField(item.misconception_counts??{},`Progress concept ${index+1} misconception_counts`);
+      if(!result.misconception_counts||typeof result.misconception_counts!=='object'||Array.isArray(result.misconception_counts))
+        throw new Error(`Progress concept ${index+1} misconception_counts must be an object.`);
+      for(const field of boolFields) if(field in result) result[field]=asBoolean(result[field],field);
+      for(const field of countFields) if(field in result) result[field]=asCount(result[field],field);
+      return result;
+    });
+    const result={...progress,concepts:normalizedConcepts};
+    for(const field of [...boolFields,'manual_override','comparison_evidence','capstone_evidence','capstone_independent_evidence','durable_mastery','grading_independent'])
+      if(field in result) result[field]=asBoolean(result[field],field);
+    for(const field of ['independent_challenges','independent_evidence','required_independent_evidence','successful_variations'])
+      if(field in result) result[field]=asCount(result[field],field);
+    if(result.guidance!=null&&!['guided','supported','independent'].includes(result.guidance)) throw new Error('Progress guidance is not recognized.');
+    if(result.recommended_guidance!=null&&!['guided','supported','independent'].includes(result.recommended_guidance)) throw new Error('Recommended guidance is not recognized.');
+    return result;
+  }
+  function normalizeContent(input,expectedTask){
+    const data=parseJsonField(input,'Command Anatomy response');
+    if(!data||typeof data!=='object'||Array.isArray(data)) throw new Error('Command Anatomy response must be an object.');
+    if(typeof data.id!=='string'||(expectedTask&&data.id!==expectedTask)) throw new Error('Command Anatomy response has the wrong task ID.');
+    for(const field of ['commands','comparisons','deeper_why','troubleshooting','retry_variations'])
+      if(!Array.isArray(data[field])) throw new Error(`Command Anatomy ${field} must be an array.`);
+    if(!data.capstone||typeof data.capstone!=='object'||!Array.isArray(data.capstone.hints)||!Array.isArray(data.capstone.reference_solution))
+      throw new Error('Command Anatomy capstone data is incomplete.');
+    for(const command of data.commands){
+      if(!command||typeof command.id!=='string'||!command.challenge||!Array.isArray(command.challenge.hints)||!Array.isArray(command.challenge.segments))
+        throw new Error('A command challenge is incomplete.');
+    }
+    return data;
+  }
   function hintCount(record){ return Number(record?.hint_count||0); }
   function setProgress(progress){
-    state.progress=progress||state.progress;
+    state.progress=normalizeProgress(progress);
+    if(state.progress.task&&state.task&&state.progress.task!==state.task) throw new Error('Progress response belongs to a different task.');
     if(root.persistAnatomyProgress) root.persistAnatomyProgress(state.progress);
   }
   function evidenceText(record){
@@ -91,7 +161,7 @@
       const saved=getDraft(retryKey,'type');
       html+=`<section class="ca-retry" aria-label="Fresh retry variation"><h4>Try a fresh variation</h4>
         <p>${esc(m.retry||'Apply this idea to a new example.')}</p>
-        ${m.id==='TARGET_HOST'?hostSelect('', 'ca-retry-host'):''}
+        ${m.id==='TARGET_HOST'?hostSelect(getRetryHost(m.id), 'ca-retry-host', `retry-host:${m.id}`):''}
         <label class="ca-input-label" for="ca-retry-${esc(m.id)}">Write the command</label>
         <textarea id="ca-retry-${esc(m.id)}" class="ca-answer" data-ca-retry="${esc(m.id)}" rows="2" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Try it without copying the example">${esc(saved)}</textarea>
         <button type="button" class="btn-ghost" data-ca-retry-check="${esc(m.id)}">Check retry</button>
@@ -151,8 +221,11 @@
     }).join('');
   }
   function selectedCommand(){ return state.data?.commands.find(c=>c.id===state.selected)||state.data?.commands[0]||null; }
-  function hostSelect(value, id){
-    return `<label class="ca-host-select" for="${id}">Command host<select id="${id}" data-ca-host><option value="">Choose a host</option>${hosts.map(h=>`<option value="${h}" ${value===h?'selected':''}>${h}</option>`).join('')}</select></label>`;
+  function getRetryHost(misconceptionId){
+    try{return localStorage.getItem(storageKey(state.task,`retry-host:${misconceptionId}`,'select'))||'';}catch(_){storageUnavailable();return '';}
+  }
+  function hostSelect(value, id, key=''){
+    return `<label class="ca-host-select" for="${id}">Command host<select id="${id}" data-ca-host ${key?`data-ca-host-key="${esc(key)}"`:''}><option value="">Choose a host</option>${hosts.map(h=>`<option value="${h}" ${value===h?'selected':''}>${h}</option>`).join('')}</select></label>`;
   }
   function modeButtons(){
     return `<div class="ca-mode-row" role="group" aria-label="Command practice level">${[
@@ -184,12 +257,14 @@
         <textarea id="ca-answer" class="ca-answer" data-ca-answer="type" rows="3" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Type the command from memory">${esc(draft)}</textarea>`;
     }
     return `<section class="ca-challenge" aria-labelledby="ca-challenge-title"><div class="ca-kicker">Stage 4 · Build your own command</div><h4 id="ca-challenge-title">Build your own command</h4>
-      ${modeButtons()}${hostSelect(state.host, 'ca-command-host')}${answerArea}
+      ${modeButtons()}${hostSelect(state.host, 'ca-command-host','command-host')}${answerArea}
       <div class="ca-inline-actions"><button type="button" class="btn-term" data-ca-check="${esc(command.id)}">Check command</button>
       <button type="button" class="btn-ghost" data-ca-hint="${esc(command.id)}">Hint <span aria-hidden="true">(${hintCount(conceptRecord(challenge.concept_id))} total)</span></button>
       <button type="button" class="btn-ghost" data-ca-independent="${esc(command.id)}">New attempt without hints</button>
       <button type="button" class="btn-ghost" data-ca-reveal="${esc(command.id)}">Reveal solution</button></div>
       ${state.hints.map((h,i)=>`<div class="ca-hint"><b>Hint ${i+1}:</b> ${esc(h)}</div>`).join('')}
+      ${state.hintsComplete?'<p class="ca-note" role="status">You have seen all available hints. Reset hints to start the sequence again.</p>':''}
+      ${state.hints.length?`<button type="button" class="btn-ghost" data-ca-reset-hints="${esc(command.id)}">Reset hints</button>`:''}
       ${feedbackHtml(state.feedback)}
       ${state.revealCommand?`<div class="ca-reference"><b>Reference solution</b><pre>${esc(challenge.reference)}</pre><button type="button" class="btn-ghost" data-ca-copy="command">Copy command</button></div>`:''}
     </section>`;
@@ -208,7 +283,7 @@
     const draft=getCapstone();
     const ref=c.reference_solution.map(item=>`<div class="ca-solution-step"><b>${esc(item.id)} · ${esc(item.host)}${item.verification?' · verification':''}</b><pre>${esc(item.command)}</pre></div>`).join('');
     return `<section class="ca-capstone"><h3>Optional full-task challenge</h3><p>${esc(c.prompt)}</p>
-      ${hostSelect(state.capstoneHost, 'ca-capstone-host')}
+      ${hostSelect(state.capstoneHost, 'ca-capstone-host','capstone-host')}
       <label class="ca-input-label" for="ca-capstone-answer">Structured command sequence — one command per line. Multiline heredocs are supported.</label>
       <textarea id="ca-capstone-answer" class="ca-answer" rows="8" data-ca-capstone autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Plan prerequisites, changes, persistence, and checks before typing">${esc(draft)}</textarea>
       <div class="ca-note"><b>Prerequisites:</b> ${esc(c.preconditions)}</div><div class="ca-note"><b>Persistence:</b> ${esc(c.persistence)}</div>
@@ -217,16 +292,19 @@
         <button type="button" class="btn-ghost" data-ca-capstone-independent>New attempt without hints</button>
         <button type="button" class="btn-ghost" data-ca-capstone-reveal>Reveal reference solution</button></div>
       ${state.capstoneHints.map((h,i)=>`<div class="ca-hint"><b>Hint ${i+1}:</b> ${esc(h)}</div>`).join('')}
+      ${state.capstoneHintsComplete?'<p class="ca-note" role="status">You have seen all available capstone hints. Reset hints to start the sequence again.</p>':''}
+      ${state.capstoneHints.length?'<button type="button" class="btn-ghost" data-ca-reset-hints="capstone">Reset hints</button>':''}
       ${feedbackHtml(state.capstoneFeedback)}
       ${state.revealCapstone?`<details class="ca-solution" open><summary>Reference sequence and dependencies</summary>${ref}<p><b>Required checks:</b> ${esc(c.verification_ids.join(', '))}</p><p>This is a simulator. It does not execute commands or award lab completion.</p></details>`:''}
     </section>`;
   }
   function render(data, progress){
+    data=normalizeContent(data);
     const changedTask=state.task!==data.id;
-    if(changedTask){state.selected='';state.mode='';state.host='';state.capstoneHost='';state.placed=[];state.feedback=null;state.hints=[];state.retryFeedback=null;state.capstoneFeedback=null;state.capstoneHints=[];state.comparisons={};state.revealCommand=false;state.revealCapstone=false;}
-    state.data=data; state.task=data.id; state.progress=progress||{concepts:[],recommended_guidance:'guided',guidance:'guided'};
+    if(changedTask){state.selected='';state.mode='';state.host='';state.capstoneHost='';state.placed=[];state.feedback=null;state.hints=[];state.retryFeedback=null;state.capstoneFeedback=null;state.capstoneHints=[];state.comparisons={};state.revealCommand=false;state.revealCapstone=false;state.error=null;state.hintsComplete=false;state.capstoneHintsComplete=false;}
+    state.data=data; state.task=data.id; state.progress=normalizeProgress(progress||{concepts:[],recommended_guidance:'guided',guidance:'guided'});
     if(changedTask){
-      try{state.host=localStorage.getItem(storageKey(state.task,'command-host','select'))||'';state.capstoneHost=localStorage.getItem(storageKey(state.task,'capstone-host','select'))||'';}catch(e){}
+      try{state.host=localStorage.getItem(storageKey(state.task,'command-host','select'))||'';state.capstoneHost=localStorage.getItem(storageKey(state.task,'capstone-host','select'))||'';}catch(e){storageUnavailable();}
     }
     if(!data.commands.some(c=>c.id===state.selected)) state.selected=data.commands[0]?.id||'';
     if(!state.mode) state.mode=modeFor(state.progress.guidance||state.progress.recommended_guidance);
@@ -254,7 +332,10 @@
         ${commandPractice(command)}</article>`;
     }
     const guideline=state.progress.guidance||state.progress.recommended_guidance||'guided';
-    return `<div class="ca-engine">
+    const warnings=[state.identityWarning,state.storageWarning].filter(Boolean).join(' ');
+    const warning=warnings?`<div class="ca-note" role="status">${esc(warnings)}</div>`:'';
+    const error=state.error?`<div class="ca-feedback is-error" role="alert"><b>Command Anatomy request failed</b><p>${esc(state.error)}</p></div>`:'';
+    return `<div class="ca-engine">${warning}${error}
       <section class="ca-why"><div class="ca-kicker">Stage 1 · Why this command?</div><h2>${esc(data.id)} command anatomy</h2>
         <p>${esc(data.why)}</p><details><summary>Explore deeper concepts</summary>${deeper}</details>
       </section>
@@ -264,7 +345,7 @@
         <button type="button" class="btn-ghost" data-ca-guidance="auto">Use recommendation</button></div>
       </section>
       <section class="ca-command-list"><div class="ca-kicker">Stage 2 · Explore command anatomy</div><h3>Choose one command</h3>${index}</section>
-      ${selected}
+      ${selected||(!data.commands.length?'<p class="ca-note" role="status">No command challenges are available for this task yet.</p>':'')}
       <section class="ca-comparisons"><div class="ca-kicker">Stage 3 · Predict before reveal</div><h3>Interactive comparisons</h3>${data.comparisons.map(comparisonHtml).join('')}</section>
       <section class="ca-troubleshoot"><div class="ca-kicker">Stage 5 · Troubleshoot</div><h3>Diagnose real failures</h3>${data.troubleshooting.map(x=>`<details class="ca-trouble"><summary>${esc(x.symptom)}</summary><p><b>Likely cause:</b> ${esc(x.cause)}</p><p><b>Next check or fix:</b> ${esc(x.fix)}</p></details>`).join('')}
         <h4>Apply the idea in a new scenario</h4>${(data.retry_variations||[]).map(item=>`<details class="ca-trouble ca-transfer"><summary>${esc(item.prompt)}</summary><p><b>Success looks like:</b> ${esc(item.success)}</p><p>Work this variation in the lab or on a disposable fixture. This prompt does not execute commands or change grading.</p></details>`).join('')}</section>
@@ -276,12 +357,40 @@
     </div>`;
   }
   async function post(path,body){
-    const response=await fetch(`/api/tasks/${encodeURIComponent(state.task)}/anatomy/${path}`,{method:'POST',headers:headers(),body:JSON.stringify(body)});
-    if(!response.ok) throw new Error(`Request failed (${response.status})`);
-    return response.json();
+    if(!state.task) throw new Error('Choose a task before sending a Command Anatomy request.');
+    let response;
+    try{response=await fetch(`/api/tasks/${encodeURIComponent(state.task)}/anatomy/${path}`,{method:'POST',headers:headers(),body:JSON.stringify(body)});}
+    catch(error){throw new Error(`Network error: ${error?.message||'could not reach the lab portal.'}`);}
+    let bodyText='';
+    try{bodyText=await response.text();}catch(error){throw new Error(`Could not read the server response: ${error?.message||'response body unavailable.'}`);}
+    let payload;
+    try{payload=JSON.parse(bodyText);}catch(_){
+      const detail=bodyText.trim().slice(0,240);
+      throw new Error(`The portal returned malformed JSON${response.ok?'':` (HTTP ${response.status})`}.${detail?` Response: ${detail}`:''}`);
+    }
+    if(typeof payload==='string') payload=parseJsonField(payload,`${path} response`);
+    if(!response.ok){const detail=payload&&typeof payload==='object'?(payload.error||payload.message):'';throw new Error(`Request failed (HTTP ${response.status})${detail?`: ${detail}`:''}`);}
+    if(!payload||typeof payload!=='object'||Array.isArray(payload)) throw new Error(`${path} response must be an object.`);
+    if(path==='progress'){
+      const progress=normalizeProgress(payload);
+      if(progress.task!==state.task) throw new Error('Progress response is missing the requested task ID.');
+      return progress;
+    }
+    if(path==='hint'){
+      if(body.reset===true){if(payload.reset!==true) throw new Error('The portal did not confirm the hint reset.');}
+      else if(typeof payload.hint!=='string'||!Number.isInteger(Number(payload.index))||typeof payload.complete!=='boolean')
+        throw new Error('The portal returned an incomplete hint response.');
+    }else if(typeof payload.outcome!=='string'||!['correct','correct_alternative','syntax_error','semantically_incorrect','missing_required_operation','dependency_error','persistence_error','unsupported'].includes(payload.outcome)) throw new Error(`${path} response is missing a recognized outcome.`);
+    if(path==='predict'&&(!Number.isInteger(Number(payload.correct_index))||typeof payload.explanation!=='string'))
+      throw new Error('Comparison response is missing its expected choice or feedback.');
+    if((path==='check'||path==='retry')&&typeof payload.message!=='string') throw new Error(`${path} response is missing feedback.`);
+    if(!('progress' in payload)) throw new Error(`${path} response is missing learner progress.`);
+    const progress=normalizeProgress(payload.progress);
+    if(progress.task!==state.task) throw new Error('Progress response is missing the requested task ID.');
+    return {...payload,progress};
   }
   function refresh(){ if(root.renderAnatomyTab) root.renderAnatomyTab(); }
-  function message(text){ state.feedback={outcome:'unsupported',message:text}; refresh(); }
+  function message(error){ state.error=error instanceof Error?error.message:String(error||'Unknown error.'); refresh(); }
   async function loadHints(id){
     try{
       const result=await post('hint',{command_id:id});
@@ -289,27 +398,37 @@
       if(id==='capstone'){
         while(state.capstoneHints.length<result.index) state.capstoneHints.push(authored[state.capstoneHints.length]||'');
         state.capstoneHints[result.index]=result.hint;
+        state.capstoneHintsComplete=result.complete;
         saveDraft('capstone','hint-list',JSON.stringify(state.capstoneHints));
       }else{
         while(state.hints.length<result.index) state.hints.push(authored[state.hints.length]||'');
         state.hints[result.index]=result.hint;
+        state.hintsComplete=result.complete;
         saveDraft(id,'hint-list',JSON.stringify(state.hints));
       }
-      setProgress(result.progress); refresh();
-    }catch(e){ message('Could not load a hint. The challenge text is still available offline while the portal is reachable.'); }
+      setProgress(result.progress); state.error=null; refresh();
+    }catch(e){ message(e); }
+  }
+  async function resetHints(id){
+    try{
+      const result=await post('hint',{command_id:id,reset:true});
+      if(id==='capstone'){state.capstoneHints=[];state.capstoneHintsComplete=false;saveDraft('capstone','hint-list','[]');}
+      else{state.hints=[];state.hintsComplete=false;saveDraft(id,'hint-list','[]');}
+      setProgress(result.progress);state.error=null;refresh();
+    }catch(e){message(e);}
   }
   async function beginIndependent(id){
     try{
       const result=await post('hint',{command_id:id,reset:true});
       if(id==='capstone'){
-        state.capstoneHints=[]; state.capstoneFeedback=null;
+        state.capstoneHints=[]; state.capstoneHintsComplete=false; state.capstoneFeedback=null;
         saveDraft('capstone','hint-list','[]');
       }else{
-        state.hints=[]; state.feedback=null; state.mode='type';
+        state.hints=[]; state.hintsComplete=false; state.feedback=null; state.mode='type';
         saveDraft(id,'hint-list','[]');
       }
-      setProgress(result.progress); refresh();
-    }catch(e){ message('Could not start a fresh independent attempt. Reconnect to the locally hosted portal and retry.'); }
+      setProgress(result.progress); state.error=null; refresh();
+    }catch(e){ message(e); }
   }
   function getAnswer(command){
     if(state.mode==='tokens') return assembled(command);
@@ -317,31 +436,32 @@
     return document.querySelector('[data-ca-answer="type"]')?.value||getDraft(command.challenge.id,'type');
   }
   async function checkCommand(id){
-    const command=state.data.commands.find(c=>c.id===id); if(!command) return;
+    const command=state.data.commands.find(c=>c.id===id); if(!command){message(`Unknown command challenge: ${id}`);return;}
     const answer=getAnswer(command), host=document.querySelector('[data-ca-host]')?.value||'';
     if(state.mode!=='blanks') saveDraft(command.challenge.id,state.mode,answer);
     try{
       state.feedback=await post('check',{command_id:id,answer,host,mode:state.mode,hints_used:state.hints.length});
       state.retryFeedback=null;
       setProgress(state.feedback.progress);
+      state.error=null;
       if(!['correct','correct_alternative'].includes(state.feedback.outcome)&&!state.progress.manual_override){
         const record=conceptRecord(command.challenge.concept_id);
         state.mode=record&&record.attempts>=2?'tokens':(state.mode==='type'?'blanks':state.mode);
       }
       refresh();
-    }catch(e){ message('Could not check the answer. Reconnect to the locally hosted portal and retry.'); }
+    }catch(e){ message(e); }
   }
   async function predict(id,index){
     try{ state.comparisons[id]=await post('predict',{comparison_id:id,selected_index:index});
-      setProgress(state.comparisons[id].progress); refresh(); }
-    catch(e){ message('Could not record this prediction. Try again while connected to the portal.'); }
+      setProgress(state.comparisons[id].progress); state.error=null; refresh(); }
+    catch(e){ message(e); }
   }
   async function checkCapstone(){
     const answer=document.querySelector('[data-ca-capstone]')?.value||getCapstone();
     const host=document.querySelector('#ca-capstone-host')?.value||''; saveCapstone(answer);
     try{ state.capstoneFeedback=await post('check',{command_id:'capstone',answer,host,mode:'type',hints_used:state.capstoneHints.length});
-      setProgress(state.capstoneFeedback.progress); refresh(); }
-    catch(e){ message('Could not check the capstone. Reconnect to the locally hosted portal and retry.'); }
+      setProgress(state.capstoneFeedback.progress); state.error=null; refresh(); }
+    catch(e){ message(e); }
   }
   async function checkRetry(misconceptionId){
     const key=`retry:${misconceptionId}`;
@@ -351,14 +471,14 @@
     try{
       const host=misconceptionId==='TARGET_HOST'?document.querySelector('#ca-retry-host')?.value||'':'';
       const result=await post('retry',{misconception_id:misconceptionId,answer,host});
-      state.retryFeedback={id:misconceptionId,result}; setProgress(result.progress); refresh();
-    }catch(e){ message('Could not check the retry. Reconnect to the locally hosted portal and retry.'); }
+      state.retryFeedback={id:misconceptionId,result}; setProgress(result.progress); state.error=null;refresh();
+    }catch(e){ message(e); }
   }
   async function setGuidance(value){
     try{
       const result=await post('progress',{guidance:value==='auto'?null:value});
-      setProgress(result); state.mode=modeFor(result.guidance||result.recommended_guidance); refresh();
-    }catch(e){ message('Could not save the guidance preference.'); }
+      setProgress(result); state.mode=modeFor(result.guidance||result.recommended_guidance);state.error=null;refresh();
+    }catch(e){ message(e); }
   }
   function saveTyped(event){
     const el=event.target;
@@ -374,16 +494,17 @@
   }
   function saveHost(event){
     if(!event.target.matches('[data-ca-host]')) return;
-    const capstone=event.target.id==='ca-capstone-host';
-    if(capstone) state.capstoneHost=event.target.value; else state.host=event.target.value;
-    try{localStorage.setItem(storageKey(state.task,capstone?'capstone-host':'command-host','select'),event.target.value);}catch(e){}
+    const key=event.target.dataset.caHostKey||(event.target.id==='ca-capstone-host'?'capstone-host':'command-host');
+    if(key==='capstone-host') state.capstoneHost=event.target.value;
+    else if(key==='command-host') state.host=event.target.value;
+    try{localStorage.setItem(storageKey(state.task,key,'select'),event.target.value);}catch(e){storageUnavailable();}
   }
   function restoreBlankDraft(command){
     if(state.blankDrafts?.[command.id]) return;
     try{state.blankDrafts=state.blankDrafts||{};state.blankDrafts[command.id]=JSON.parse(getDraft(command.challenge.id,'blanks')||'{}');}catch(e){}
   }
   function click(event){
-    const button=event.target.closest('[data-ca-select],[data-ca-mode],[data-ca-token],[data-ca-undo],[data-ca-reset],[data-ca-check],[data-ca-hint],[data-ca-independent],[data-ca-reveal],[data-ca-guidance],[data-ca-predict],[data-ca-capstone-check],[data-ca-capstone-hint],[data-ca-capstone-independent],[data-ca-capstone-reveal],[data-ca-research],[data-ca-copy],[data-ca-retry-check]');
+    const button=event.target.closest('[data-ca-select],[data-ca-mode],[data-ca-token],[data-ca-undo],[data-ca-reset],[data-ca-check],[data-ca-hint],[data-ca-reset-hints],[data-ca-independent],[data-ca-reveal],[data-ca-guidance],[data-ca-predict],[data-ca-capstone-check],[data-ca-capstone-hint],[data-ca-capstone-independent],[data-ca-capstone-reveal],[data-ca-research],[data-ca-copy],[data-ca-retry-check],[data-ca-load-retry]');
     if(!button) return;
     if(button.dataset.caSelect){
       state.selected=button.dataset.caSelect; state.mode=modeFor(state.progress.guidance||state.progress.recommended_guidance||'guided');
@@ -395,6 +516,8 @@
     else if(button.hasAttribute('data-ca-reset')){state.placed=[];saveDraft(selectedCommand().challenge.id,'tokens','[]');state.feedback=null;refresh();}
     else if(button.dataset.caCheck) checkCommand(button.dataset.caCheck);
     else if(button.dataset.caHint) loadHints(button.dataset.caHint);
+    else if(button.dataset.caResetHints) resetHints(button.dataset.caResetHints);
+    else if(button.hasAttribute('data-ca-load-retry')) root.renderAnatomyTab?.({force:true});
     else if(button.dataset.caIndependent) beginIndependent(button.dataset.caIndependent);
     else if(button.dataset.caReveal){state.revealCommand=true;refresh();}
     else if(button.dataset.caGuidance) setGuidance(button.dataset.caGuidance==='auto'?'auto':button.dataset.caGuidance);
@@ -407,11 +530,16 @@
     else if(button.hasAttribute('data-ca-research')){
       if(root.openResearchTab) root.openResearchTab();
     }else if(button.hasAttribute('data-ca-copy')){
-      const c=selectedCommand(); if(c&&navigator.clipboard) navigator.clipboard.writeText(c.command).catch(()=>{});
+      const c=selectedCommand();
+      if(!c) message('Select a command before copying it.');
+      else if(!navigator.clipboard?.writeText) message('Clipboard access is unavailable. Select and copy the command text instead.');
+      else navigator.clipboard.writeText(c.command).catch(e=>message(`Could not copy command: ${e?.message||'clipboard access was denied.'}`));
     }
   }
   document.addEventListener('click',click);
   document.addEventListener('input',saveTyped);
   document.addEventListener('change',saveHost);
-  root.CommandAnatomy={render,headers,learnerId:getLearnerId};
+  function loadingHtml(task){return `<p class="ca-loading" role="status">Loading Command Anatomy for ${esc(task)}…</p>`;}
+  function errorHtml(error){return `<div class="ca-load-error" role="alert"><b>Command Anatomy could not load.</b><p>${esc(error||'Unknown error.')}</p><button type="button" class="btn-ghost" data-ca-load-retry>Retry</button></div>`;}
+  root.CommandAnatomy={render,headers,learnerId:getLearnerId,validUuid,normalizeProgress,normalizeContent,loadingHtml,errorHtml};
 })(typeof globalThis!=='undefined'?globalThis:this);

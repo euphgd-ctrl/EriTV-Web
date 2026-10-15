@@ -268,9 +268,17 @@ document.addEventListener('click', e=>{
 });
 
 async function readJSON(url, options={}){
-  const response=await fetch(url,options);
-  if(!response.ok) throw new Error('HTTP '+response.status);
-  return response.json();
+  let response;
+  try{response=await fetch(url,options);}
+  catch(e){throw new Error(`Network error: ${e?.message||'could not reach the portal.'}`);}
+  let text;
+  try{text=await response.text();}
+  catch(e){throw new Error(`Could not read the server response: ${e?.message||'response body unavailable.'}`);}
+  let payload;
+  try{payload=JSON.parse(text);}
+  catch(_){throw new Error(`The portal returned malformed JSON${response.ok?'':` (HTTP ${response.status})`}.${text.trim()?` Response: ${text.trim().slice(0,240)}`:''}`);}
+  if(!response.ok){const detail=payload&&typeof payload==='object'&&(payload.error||payload.message);throw new Error(`Request failed (HTTP ${response.status})${detail?`: ${detail}`:''}`);}
+  return payload;
 }
 window.persistAnatomyProgress = progress => {
   if(progress && progress.task) anatomyProgressCache[progress.task]=progress;
@@ -278,21 +286,27 @@ window.persistAnatomyProgress = progress => {
 window.openResearchTab = () => {
   activeItab='research'; renderItabs(); renderItabBody();
 };
-window.renderAnatomyTab = async () => {
+window.renderAnatomyTab = async (options={}) => {
   const tid=currentTid, requestId=modalRequest, body=document.getElementById('modalBody');
   if(!tid || !body) return;
   const previousScroll=body.scrollTop;
+  const isCurrent=()=>tid===currentTid&&requestId===modalRequest&&activeItab==='anatomy';
+  if(options.force){delete anatomyCache[tid];delete anatomyProgressCache[tid];}
+  body.innerHTML=CommandAnatomy.loadingHtml(tid);
   if(!anatomyCache[tid]){
-    body.innerHTML='<p style="padding:12px;color:var(--muted)">Loading this task’s local command challenges…</p>';
-    try{ anatomyCache[tid]=await readJSON(`/api/tasks/${tid}/anatomy`); }
-    catch(e){ body.innerHTML='<p>Command Anatomy is unavailable. Reload the task while connected to the locally hosted portal.</p>'; return; }
+    try{ anatomyCache[tid]=CommandAnatomy.normalizeContent(await readJSON(`/api/tasks/${encodeURIComponent(tid)}/anatomy`,{headers:CommandAnatomy.headers()}),tid); }
+    catch(e){ if(isCurrent()) body.innerHTML=CommandAnatomy.errorHtml(e.message); return; }
   }
   if(!anatomyProgressCache[tid]){
-    try{ anatomyProgressCache[tid]=await readJSON(`/api/tasks/${tid}/anatomy/progress`,{headers:CommandAnatomy.headers()}); }
-    catch(e){ anatomyProgressCache[tid]={task:tid,concepts:[],guidance:'guided',recommended_guidance:'guided'}; }
+    try{
+      anatomyProgressCache[tid]=CommandAnatomy.normalizeProgress(await readJSON(`/api/tasks/${encodeURIComponent(tid)}/anatomy/progress`,{headers:CommandAnatomy.headers()}));
+      if(anatomyProgressCache[tid].task!==tid) throw new Error('Progress response is missing the requested task ID.');
+    }
+    catch(e){ if(isCurrent()) body.innerHTML=CommandAnatomy.errorHtml(`Could not load learner progress: ${e.message}`); return; }
   }
-  if(tid!==currentTid || requestId!==modalRequest || activeItab!=='anatomy') return;
-  body.innerHTML=CommandAnatomy.render(anatomyCache[tid],anatomyProgressCache[tid]);
+  if(!isCurrent()) return;
+  try{body.innerHTML=CommandAnatomy.render(anatomyCache[tid],anatomyProgressCache[tid]);}
+  catch(e){body.innerHTML=CommandAnatomy.errorHtml(`The anatomy data could not be displayed: ${e.message}`);return;}
   body.scrollTop=previousScroll;
 };
 
