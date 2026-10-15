@@ -120,13 +120,15 @@ console.log('[service worker]');
       }
     });
 
-    await okAsync('activate deletes old caches', async () => {
+    await okAsync('activate cleans only EriTV caches', async () => {
       await globalThis.caches.open('eritv-shell-v1');
+      await globalThis.caches.open('linux-mastery-lab-pwa-v1');
       let p; swListeners.activate({ waitUntil: (x) => { p = x; } });
       await p;
       const names = await globalThis.caches.keys();
       assert.ok(!names.includes('eritv-shell-v1'));
-      assert.equal(names.length, 1);
+      assert.ok(names.includes('linux-mastery-lab-pwa-v1'), 'another PWA cache must be preserved');
+      assert.equal(names.length, 2);
     });
 
     await okAsync('m3u8 playlist bypasses the worker', async () => {
