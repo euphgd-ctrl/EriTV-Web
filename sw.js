@@ -12,7 +12,8 @@
  *  - Other same-origin GETs: stale-while-revalidate -- serve the cached copy
  *    instantly, refresh it in the background for next time.
  */
-const CACHE = 'eritv-shell-v9';
+const CACHE_PREFIX = 'eritv-shell-';
+const CACHE = CACHE_PREFIX + 'v9';
 const ASSETS = [
   './',
   './index.html',
@@ -34,7 +35,7 @@ self.addEventListener('install', function (e) {
 self.addEventListener('activate', function (e) {
   e.waitUntil(
     caches.keys()
-      .then(function (keys) { return Promise.all(keys.filter(function (k) { return k !== CACHE; }).map(function (k) { return caches.delete(k); })); })
+      .then(function (keys) { return Promise.all(keys.filter(function (k) { return k.startsWith(CACHE_PREFIX) && k !== CACHE; }).map(function (k) { return caches.delete(k); })); })
       .then(function () { return self.clients.claim(); })
   );
 });

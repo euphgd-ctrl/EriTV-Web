@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Linux Mastery Lab</title>
+<meta name="theme-color" content="#0d1117">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Linux Lab">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="180x180" href="./static/icons/apple-touch-icon.png">
+<style>
+:root{
+  --bg:#0d1117; --card:#161b22; --card2:#1c2128; --border:#30363d;
+  --text:#e6edf3; --muted:#8b949e; --accent:#58a6ff; --green:#3fb950;
+  --red:#f85149; --amber:#d29922; --purple:#bc8cff;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html{scroll-behavior:smooth}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--text);padding:12px;max-width:900px;margin:0 auto;min-height:100vh}
+h1{font-size:1.4em}
+/* Header */
+.hero{text-align:center;padding:20px 0 12px}
+.hero .logo{font-size:2.8em;filter:drop-shadow(0 4px 12px rgba(88,166,255,.3))}
+.hero h1{margin:6px 0;font-size:1.7em;background:linear-gradient(135deg,#58a6ff,#bc8cff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.hero .sub{color:var(--muted);font-size:.9em}
+/* Tabs */
+.tabs{display:flex;gap:6px;margin:14px 0;position:sticky;top:0;z-index:50;background:rgba(13,17,23,.95);backdrop-filter:blur(10px);padding:8px 0}
+.tab{flex:1;text-align:center;padding:10px 6px;border-radius:10px;background:var(--card);cursor:pointer;font-size:.85em;font-weight:600;color:var(--muted);transition:all .2s;border:1px solid transparent}
+.tab.active{background:linear-gradient(135deg,#1f6feb,#388bfd);color:#fff;box-shadow:0 4px 12px rgba(31,111,235,.3)}
+/* Task cards */
+.task{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;margin:8px 0;display:flex;align-items:center;gap:12px;cursor:pointer;transition:transform .15s,box-shadow .15s}
+.task:active{transform:scale(.98)}
+.task:hover{box-shadow:0 4px 16px rgba(0,0,0,.3)}
+.task .id{font-weight:800;color:var(--accent);min-width:46px;font-size:.95em}
+.task .title{flex:1;font-size:.95em;line-height:1.4}
+.task .diff{color:var(--amber);font-size:.8em;letter-spacing:1px}
+.task.done{border-left:4px solid var(--green)}
+.task.todo{border-left:4px solid var(--border)}
+.task.next{border-left:4px solid var(--accent);background:linear-gradient(135deg,#161b22,#1a2332)}
+.check-toggle{background:transparent;border:1px solid var(--border);border-radius:10px;min-width:46px;min-height:46px;font-size:1.4em;color:var(--green);cursor:pointer}
+.mod-head{font-weight:700;margin:14px 0 6px;font-size:1.05em;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-size:.8em}
+/* Modal */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);z-index:100;display:none;opacity:0;transition:opacity .25s}
+.modal-bg.open{display:flex;opacity:1}
+.modal{background:var(--bg);border:1px solid var(--border);border-radius:20px 20px 0 0;width:100%;max-width:720px;max-height:92vh;margin:auto auto 0;overflow:hidden;display:flex;flex-direction:column;transform:translateY(40px);transition:transform .25s;position:relative}
+.modal-bg.open .modal{transform:translateY(0)}
+@media(min-width:768px){
+  .modal-bg.open{align-items:center;justify-content:center;padding:24px}
+  .modal{border-radius:20px;margin:auto;max-height:88vh}
+}
+.modal-handle{width:40px;height:4px;background:var(--border);border-radius:2px;margin:10px auto 0;flex-shrink:0}
+@media(min-width:768px){.modal-handle{display:none}}
+.modal-close{position:absolute;top:12px;right:12px;background:var(--card2);border:1px solid var(--border);color:var(--text);width:36px;height:36px;border-radius:50%;font-size:1.1em;cursor:pointer;z-index:5}
+.modal-head{padding:20px 20px 0;flex-shrink:0}
+.modal-head .qid{font-size:.75em;color:var(--accent);font-weight:800;letter-spacing:1.5px}
+.modal-head h2{font-size:1.35em;margin:4px 0}
+.modal-head .meta{font-size:.82em;color:var(--muted);margin-top:4px}
+/* Inner tabs */
+.itabs{display:flex;gap:4px;padding:12px 16px 0;overflow-x:auto;flex-shrink:0;scrollbar-width:none}
+.itabs::-webkit-scrollbar{display:none}
+.itab{padding:9px 14px;border-radius:10px 10px 0 0;background:transparent;color:var(--muted);font-size:.82em;font-weight:700;cursor:pointer;white-space:nowrap;border:1px solid transparent;border-bottom:0;transition:all .15s}
+.itab.active{background:var(--card);color:var(--text);border-color:var(--border)}
+.modal-body{overflow-y:auto;padding:16px 20px 32px;flex:1;background:var(--card);border-top:1px solid var(--border);margin:0 12px 12px;border-radius:0 0 12px 12px}
+/* Content styling */
+.sect{margin-bottom:18px}
+.sect h3{font-size:.95em;margin-bottom:8px;color:var(--accent)}
+.sect p,.sect div.txt{font-size:.92em;line-height:1.75;color:#c9d1d9}
+.flag-chip{display:inline-block;background:#1f2a3a;border:1px solid #2a3a52;color:#79c0ff;border-radius:6px;padding:1px 7px;font-family:ui-monospace,monospace;font-size:.85em;cursor:pointer;margin:1px 2px;transition:all .15s}
+.flag-chip:hover{background:#2a3a52;transform:translateY(-1px)}
+.cmd{background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-family:ui-monospace,SFMono-Regular,monospace;font-size:.85em;display:block;margin:6px 0;overflow-x:auto;white-space:pre-wrap;word-break:break-all;user-select:all}
+.cmd-row{display:flex;gap:8px;align-items:flex-start;margin:8px 0;background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:10px 12px}
+.cmd-row .arrow{color:var(--green);flex-shrink:0;margin-top:2px}
+table.concept{width:100%;border-collapse:collapse;font-size:.88em;margin:8px 0}
+table.concept td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top;line-height:1.5}
+table.concept td:first-child{font-family:ui-monospace,monospace;color:#79c0ff;white-space:nowrap;min-width:110px}
+.trap{background:rgba(248,81,73,.08);border-left:3px solid var(--red);padding:10px 12px;margin:8px 0;border-radius:0 8px 8px 0;font-size:.9em;line-height:1.6}
+.fix{background:rgba(63,185,80,.08);border-left:3px solid var(--green);padding:10px 12px;margin:8px 0;border-radius:0 8px 8px 0;font-size:.9em;line-height:1.6}
+.shortcut{background:linear-gradient(135deg,#1a2332,#161b22);border:1px solid #2a3a52;border-radius:10px;padding:12px 14px;font-size:.9em;text-align:center;color:#79c0ff;font-weight:600;letter-spacing:.3px}
+.pwa-bar{display:flex;align-items:center;gap:8px;margin:10px 0 4px;padding:9px;background:var(--card);border:1px solid var(--border);border-radius:12px}
+#connection-indicator{flex:1;min-width:0;font-size:.78em;color:var(--muted);line-height:1.4}
+#connection-indicator[data-state="online"]{color:#7ee787}
+.pwa-bar button{min-height:42px;padding:9px 12px;font-size:.82em;white-space:nowrap}
+#pwa-settings{width:min(560px,calc(100% - 24px));max-height:88vh;margin:auto;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:16px;padding:18px}
+#pwa-settings::backdrop{background:rgba(0,0,0,.75);backdrop-filter:blur(3px)}
+#pwa-settings h2{margin:2px 0 12px}
+#pwa-settings p{color:#c9d1d9;font-size:.9em;line-height:1.55;margin:9px 0}
+#pwa-settings label{display:block;font-size:.85em;color:var(--muted);margin:12px 0 6px}
+#pwa-settings input{width:100%;min-height:46px;border-radius:8px;border:1px solid var(--border);padding:10px;background:#0d1117;color:var(--text);font:inherit}
+#settings-message{min-height:22px;color:#7ee787;font-size:.86em;line-height:1.45}
+#settings-help{padding:10px;background:#101924;border:1px solid var(--border);border-radius:8px}
+.pwa-dialog-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.pwa-dialog-actions button{flex:1 1 130px;min-height:44px}
+/* Action buttons */
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}
+button{border:0;border-radius:12px;padding:14px 16px;font-size:.95em;font-weight:700;cursor:pointer;color:#fff;transition:transform .1s}
+button:active{transform:scale(.97)}
+.btn-setup{background:linear-gradient(135deg,#238636,#2ea043)}
+.btn-term{background:linear-gradient(135deg,#1f6feb,#388bfd)}
+.btn-check{background:linear-gradient(135deg,#9e6a03,#d29922)}
+.btn-reset{background:linear-gradient(135deg,#6e5a00,#895d00)}
+.btn-ghost{background:var(--card2);border:1px solid var(--border);color:var(--text)}
+#result,#hints{margin:10px 0}
+.check{padding:8px 0;border-bottom:1px solid var(--border);font-size:.9em}
+.check.pass{color:var(--green)}.check.fail{color:var(--red)}
+.hint{background:rgba(63,185,80,.08);border-left:3px solid var(--green);padding:10px;margin:6px 0;font-size:.9em;border-radius:0 8px 8px 0;line-height:1.6}
+/* Popup for flag details */
+.flag-popup{position:fixed;z-index:200;background:#1c2332;border:1px solid #3a4a63;border-radius:12px;padding:14px 16px;max-width:320px;box-shadow:0 12px 40px rgba(0,0,0,.5);display:none;font-size:.88em;line-height:1.6}
+.flag-popup.open{display:block;animation:popin .18s ease-out}
+@keyframes popin{from{opacity:0;transform:scale(.95) translateY(4px)}to{opacity:1;transform:scale(1) translateY(0)}}
+.flag-popup .fp-title{font-family:ui-monospace,monospace;color:#79c0ff;font-weight:700;margin-bottom:6px;font-size:1.05em}
+.flag-popup .fp-close{position:absolute;top:6px;right:10px;cursor:pointer;color:var(--muted);font-size:1.1em}
+/* Stats */
+.stat-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:12px 0}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center}
+.stat .n{font-size:1.6em;font-weight:800}
+.stat .l{font-size:.78em;color:var(--muted);margin-top:4px}
+.progress{background:#242830;border-radius:6px;height:8px;margin:6px 0}
+.progress>div{background:linear-gradient(90deg,#238636,#3fb950);height:8px;border-radius:6px;transition:width .3s}
+.open-term{display:inline-block;color:var(--accent);text-decoration:none;background:var(--card);padding:12px 20px;border-radius:12px;border:1px solid var(--border);font-weight:700;margin:8px 0}
+.lesson-card{padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:10px;margin:10px 0;overflow-wrap:anywhere}
+.lesson-card h4{color:var(--accent);font-size:.95em;margin-bottom:8px}
+.lesson-card p{font-size:.9em;line-height:1.65;margin:7px 0}
+.lesson-host{font-size:.8em;color:var(--green);display:block;margin:8px 0}
+.lesson-details{margin:10px 0;font-size:.9em;line-height:1.6}
+.lesson-details summary{cursor:pointer;color:var(--accent);padding:10px 0}
+.lesson-tokens{display:flex;flex-wrap:wrap;gap:5px}
+.lesson-tokens .flag-chip{min-height:44px;padding:8px;font-weight:500;max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:left}
+.flag-popup{max-height:70vh;overflow-y:auto;overflow-wrap:anywhere}
+button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+/* Command Anatomy: high-contrast, touch-sized controls; all content stays local. */
+.ca-engine{display:grid;gap:14px}
+.ca-engine section,.ca-command-detail,.ca-compare,.ca-capstone{background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:14px;overflow-wrap:anywhere}
+.ca-engine h2{font-size:1.15em;margin:5px 0 9px;color:var(--accent)}
+.ca-engine h3{font-size:1em;margin:7px 0;color:var(--accent)}
+.ca-engine h4{font-size:.95em;margin:10px 0;color:var(--text)}
+.ca-engine p{font-size:.9em;line-height:1.65;margin:7px 0;color:#c9d1d9}
+.ca-kicker{font-size:.72em;text-transform:uppercase;letter-spacing:.08em;color:var(--purple);font-weight:800}
+.ca-deeper,.ca-part,.ca-trouble,.ca-solution,.ca-reference-collapsed{border-top:1px solid var(--border);margin-top:8px;padding-top:6px}
+.ca-engine summary{cursor:pointer;min-height:44px;padding:11px 4px;color:var(--accent);font-weight:700;line-height:1.45}
+.ca-part-body{padding:4px 8px 10px}
+.ca-guidance{display:grid;gap:10px}
+.ca-guidance-buttons,.ca-mode-row,.ca-inline-actions{display:flex;flex-wrap:wrap;gap:8px;margin:9px 0}
+.ca-guidance-buttons button,.ca-mode{min-height:44px;flex:1 1 auto}
+.ca-guidance-buttons .selected,.ca-mode.active{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent);color:#fff}
+.ca-command-index{display:flex;align-items:center;gap:10px;width:100%;min-height:58px;text-align:left;background:var(--card);border:1px solid var(--border);color:var(--text);margin:7px 0;padding:10px 12px}
+.ca-command-index.selected{border-color:var(--accent)}
+.ca-index-item{margin:7px 0;padding:7px;border:1px solid var(--border);border-radius:10px;background:var(--card)}
+.ca-index-item .ca-command-index{margin:0;border:0;background:transparent}
+.ca-index-preview{margin:0 8px;border-top:1px solid var(--border);padding-top:2px}
+.ca-index-preview summary{font-size:.78em;min-height:40px}
+.ca-index-preview pre{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;background:#080b10;border:1px solid var(--border);border-radius:8px;padding:9px;font:.8em/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;user-select:text}
+.ca-anatomy-breakdown{margin:11px 0;padding:0 8px;border:1px solid var(--border);border-radius:9px;background:#10151d}
+.ca-command-index>b{color:var(--accent);min-width:32px}
+.ca-index-main{display:grid;gap:4px;flex:1;min-width:0}
+.ca-index-main small,.ca-learning-status{font-size:.78em;color:var(--muted)}
+.ca-reference-collapsed pre,.ca-command-detail pre,.ca-capstone pre,.ca-compare pre,.ca-solution-step pre{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;background:#080b10;border:1px solid var(--border);border-radius:8px;padding:10px;font: .82em/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;max-width:100%;user-select:text}
+.ca-parts{display:grid;grid-template-columns:1fr;gap:5px}
+.ca-part{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:0 9px}
+.ca-part summary code{color:#79c0ff;font-size:.92em;overflow-wrap:anywhere}
+.ca-challenge{margin-top:14px;padding:12px;border:1px solid #315b86;border-radius:10px;background:#101924}
+.ca-challenge h4{margin-top:0;color:#79c0ff}
+.ca-host-select{display:grid;gap:6px;font-size:.83em;font-weight:700;margin:9px 0;color:var(--muted)}
+.ca-host-select select{width:100%;min-height:44px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px;font-size:1em}
+.ca-token-bank{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+.ca-token{min-height:48px;max-width:100%;font: .85em/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;background:#1b2b3e;border:1px solid #385a7c;color:#dbeafe;padding:9px 11px;overflow-wrap:anywhere;white-space:normal;text-align:left;user-select:text}
+.ca-build-output{margin:10px 0;padding:10px;background:#0a0f16;border:1px solid var(--border);border-radius:8px}
+.ca-build-output pre{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;font:.85em/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;margin:7px 0;user-select:text}
+.ca-fill-line{line-height:2.6;overflow-wrap:anywhere}
+.ca-fill-line code{font:.85em ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap}
+.ca-blank{width:min(190px,42vw);min-height:42px;border:1px solid var(--accent);background:#0d1117;color:var(--text);border-radius:7px;padding:7px;font: .9em ui-monospace,SFMono-Regular,Consolas,monospace;vertical-align:middle}
+.ca-input-label{display:block;font-size:.85em;color:var(--muted);margin:10px 0 6px}
+.ca-answer{display:block;width:100%;min-height:74px;resize:vertical;border:1px solid var(--border);border-radius:8px;background:#080b10;color:var(--text);padding:11px;font: .88em/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
+.ca-feedback{margin:10px 0;padding:11px;border-radius:8px;border:1px solid var(--border);line-height:1.55}
+.ca-feedback b{display:block;margin-bottom:4px}
+.ca-feedback.is-correct{border-left:4px solid var(--green)}.ca-feedback.is-error{border-left:4px solid var(--amber)}
+.ca-micro,.ca-hint,.ca-note{margin:9px 0;padding:10px;border:1px solid var(--border);border-radius:8px;background:#111821;font-size:.88em;line-height:1.55;overflow-wrap:anywhere}
+.ca-micro h4{color:var(--amber)}
+.ca-retry{margin:10px 0;padding:11px;border:1px solid #4c6075;border-radius:9px;background:#0f1721}
+.ca-retry h4{margin-top:0;color:#9cc9f5}
+.ca-engine :focus-visible{outline:3px solid #f1c75b;outline-offset:2px}
+.ca-compare-options{display:grid;grid-template-columns:1fr;gap:9px;margin:10px 0}
+.ca-compare-option{border:1px solid var(--border);border-radius:9px;padding:10px;background:var(--card)}
+.ca-compare-option pre{min-height:54px}
+.ca-option-label{font-size:.78em;color:var(--muted);font-weight:800}
+.ca-compare-option button{min-height:44px;width:100%}
+.ca-trouble,.ca-research-step,.ca-solution-step{padding:9px;border:1px solid var(--border);border-radius:8px;margin:7px 0;background:var(--card)}
+.ca-link{display:inline;background:transparent;border:0;color:var(--accent);text-decoration:underline;padding:3px;min-height:32px;font:inherit}
+.ca-separation{padding:8px;border-left:3px solid var(--purple);color:var(--muted)!important}
+.ca-command-index,.ca-token,.ca-mode,.ca-engine button{touch-action:manipulation}
+@media(min-width:720px){.ca-compare-options{grid-template-columns:1fr 1fr}.ca-guidance{grid-template-columns:1fr 1fr;align-items:center}.ca-parts{grid-template-columns:1fr 1fr}}
+@media(max-width:420px){.ca-engine section,.ca-command-detail,.ca-compare,.ca-capstone{padding:11px}.ca-inline-actions>*{flex:1 1 100%}.ca-token{font-size:.8em;padding:8px}.ca-guidance-buttons button{flex:1 1 45%}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;transition-duration:.01ms!important}}
+</style>
+</head>
+<body>
+<div class="hero">
+  <div class="logo">🐧</div>
+  <h1>Linux Mastery Lab</h1>
+  <div class="sub">Hands-on RHCSA training · 38 tasks</div>
+</div>
+<div class="pwa-bar">
+  <span id="connection-indicator" role="status" aria-live="polite">Preparing offline lessons…</span>
+  <button id="install-button" class="btn-ghost" type="button" hidden>Install</button>
+  <button id="settings-button" class="btn-ghost" type="button">⚙️ Settings</button>
+</div>
+<div style="text-align:center"><a class="open-term" href="/terminal" onclick="event.preventDefault();window.LMLPwa.openTerminal('workstation')">🖥️ Open Terminal</a></div>
+<div class="tabs">
+  <div class="tab active" data-tab="path">📚 Learn</div>
+  <div class="tab" data-tab="tasks">📋 Tasks</div>
+  <div class="tab" data-tab="recall">🔄 Review</div>
+  <div class="tab" data-tab="dash">📊 Stats</div>
+</div>
+<div id="pathlist"></div>
+<div id="tasklist" style="display:none"></div>
+<div id="recalllist" style="display:none"></div>
+<div id="dashlist" style="display:none"></div>
+
+<!-- Task detail modal -->
+<div class="modal-bg" id="modalBg">
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-handle"></div>
+    <button class="modal-close" onclick="closeModal()" aria-label="Close">✕</button>
+    <div class="modal-head" id="modalHead"></div>
+    <div class="itabs" id="itabs"></div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+<div class="flag-popup" id="flagPopup" role="dialog" aria-label="Command component explanation"><button type="button" class="fp-close" style="padding:0;background:transparent" aria-label="Close command explanation" onclick="hideFlagPopup()">✕</button><div class="fp-title" id="fpTitle"></div><div id="fpBody"></div></div>
+
+<dialog id="pwa-settings" aria-labelledby="settings-title">
+  <h2 id="settings-title">App and lab connection</h2>
+  <p>All 38 lessons and Command Anatomy practice are included for offline use. Connect your controller for live VM setup, reset, grading, server progress, and SSH terminal access.</p>
+  <form id="settings-form">
+    <label for="controller-url">Lab controller address</label>
+    <input id="controller-url" name="controller" type="url" inputmode="url" autocapitalize="none" autocomplete="url" spellcheck="false" placeholder="https://your-controller.example">
+    <p>Use an address reachable on your Wi-Fi or VPN. If this app is open on HTTPS, browsers block HTTP API calls. For HTTP-only controllers, open the controller portal directly for live VM actions; offline study still works here.</p>
+    <p id="settings-message" aria-live="polite"></p>
+    <div class="pwa-dialog-actions">
+      <button class="btn-term" type="submit">Save and test</button>
+      <button class="btn-ghost" id="open-controller" type="button">Open live portal</button>
+      <button class="btn-ghost" id="settings-close" type="button">Close</button>
+    </div>
+  </form>
+  <p id="install-help" role="note"></p>
+</dialog>
+
+<script src="./static/pwa-bridge.js"></script>
+<script src="./static/lesson.js"></script>
+<script src="./static/command_anatomy.js"></script>
+<script>
+let tasks=[], currentTid=null, enrichCache={}, lessonCache={}, anatomyCache={}, anatomyProgressCache={}, modalRequest=0;
+
+document.addEventListener('click', e=>{
+  const chip=e.target.closest('[data-lesson-command]');
+  if(!chip) return;
+  const lesson=lessonCache[currentTid];
+  const c=lesson?.commands[Number(chip.dataset.lessonCommand)];
+  const p=c?.parts[Number(chip.dataset.lessonPart)];
+  if(!p) return;
+  showFlagPopup(p.token,e);
+  document.getElementById('fpTitle').textContent = c.command+' · '+p.token;
+  document.getElementById('fpBody').innerHTML = LessonView.partBody(p);
+  const popup=document.getElementById('flagPopup');
+  // offsetHeight is stable during the pop-in transform animation.
+  popup.style.top=Math.max(12,Math.min((e.clientY||window.innerHeight/2)+12,window.innerHeight-popup.offsetHeight-12))+'px';
+});
+
+async function readJSON(url, options={}){
+  const response=await fetch(url,options);
+  if(!response.ok) throw new Error('HTTP '+response.status);
+  return response.json();
+}
+window.persistAnatomyProgress = progress => {
+  if(progress && progress.task) anatomyProgressCache[progress.task]=progress;
+};
+window.openResearchTab = () => {
+  activeItab='research'; renderItabs(); renderItabBody();
+};
+window.renderAnatomyTab = async () => {
+  const tid=currentTid, requestId=modalRequest, body=document.getElementById('modalBody');
+  if(!tid || !body) return;
+  const previousScroll=body.scrollTop;
+  if(!anatomyCache[tid]){
+    body.innerHTML='<p style="padding:12px;color:var(--muted)">Loading this task’s local command challenges…</p>';
+    try{ anatomyCache[tid]=await readJSON(`/api/tasks/${tid}/anatomy`); }
+    catch(e){ body.innerHTML='<p>Command Anatomy is unavailable. Reload the task while connected to the locally hosted portal.</p>'; return; }
+  }
+  if(!anatomyProgressCache[tid]){
+    try{ anatomyProgressCache[tid]=await readJSON(`/api/tasks/${tid}/anatomy/progress`,{headers:CommandAnatomy.headers()}); }
+    catch(e){ anatomyProgressCache[tid]={task:tid,concepts:[],guidance:'guided',recommended_guidance:'guided'}; }
+  }
+  if(tid!==currentTid || requestId!==modalRequest || activeItab!=='anatomy') return;
+  body.innerHTML=CommandAnatomy.render(anatomyCache[tid],anatomyProgressCache[tid]);
+  body.scrollTop=previousScroll;
+};
+
+/* ---------- flag knowledge base for popups ---------- */
+const FLAG_DB = {
+  '-a':'<b>Stands for:</b> --append (or --archive in some tools)<br><b>What it does:</b> Adds to the end of a file instead of overwriting it.<br><b>Why:</b> Without -a, <code>tee /etc/fstab</code> would <i>erase</i> fstab and replace it with one line — destroying your boot config. With -a, your new line is safely added after existing entries.',
+  '--append':'<b>What it does:</b> Append to files instead of overwriting.<br><b>Why it matters:</b> The safe way to add lines to critical system files like /etc/fstab.',
+  '-p':'<b>Stands for:</b> --parents<br><b>What it does:</b> Creates missing parent directories; no error if the directory already exists.<br><b>Why:</b> <code>mkdir -p /a/b/c</code> works even if /a doesn\'t exist yet. Idempotent — safe to re-run.',
+  '-r':'<b>Stands for:</b> --recursive<br><b>What it does:</b> Operates on directories and everything inside them.<br><b>Why:</b> Without -r, <code>rm</code> refuses to delete directories. Dangerous with rm — double-check the path!',
+  '-f':'<b>Stands for:</b> --force<br><b>What it does:</b> Suppresses prompts and ignores nonexistent files.<br><b>Why:</b> <code>rm -f</code> won\'t ask "are you sure?" — fast but unforgiving.',
+  '-i':'<b>Stands for:</b> --interactive<br><b>What it does:</b> Prompts before overwriting/deleting.<br><b>Why:</b> The safe counterpart to -f. Aliased by default on RHEL for rm/cp/mv.',
+  '-v':'<b>Stands for:</b> --verbose<br><b>What it does:</b> Prints what it\'s doing as it works.<br><b>Why:</b> Visibility — see each file as it\'s copied/moved.',
+  '-n':'<b>Stands for:</b> --no-clobber (cp/mv) or line numbers (cat/grep)<br><b>Context matters!</b> With cp: won\'t overwrite existing files. With cat -n: shows line numbers.',
+  '-y':'<b>Stands for:</b> --assumeyes<br><b>What it does:</b> Auto-answers "yes" to all prompts.<br><b>Why:</b> Non-interactive installs — essential for scripts. <code>dnf install -y htop</code>',
+  '-q':'<b>Stands for:</b> --quiet / --query<br><b>Context:</b> rpm -q = query the package database. Opposite of -v.',
+  '-t':'<b>Stands for:</b> --type<br><b>What it does:</b> Specifies a type — filesystem type (mount -t xfs), key type (ssh-keygen -t ed25519).',
+  '-o':'<b>Stands for:</b> --options<br><b>What it does:</b> Passes comma-separated options. <code>ssh -o BatchMode=yes</code>, <code>mount -o defaults</code>',
+  '-h':'<b>Stands for:</b> --human-readable<br><b>What it does:</b> Shows sizes in K/M/G instead of raw bytes.<br><b>Why:</b> <code>df -h</code> vs <code>df</code> — readability.',
+  '-l':'<b>Stands for:</b> --long (ls) — detailed listing with permissions, owner, size, date.',
+  '-d':'<b>Stands for:</b> --directory — list the directory itself, not its contents. <code>ls -ld /etc</code>',
+  '-s':'<b>Stands for:</b> --size — print sizes. With sort: <code>du -sh</code> = summary, human-readable.',
+  '-c':'<b>Stands for:</b> --count or --check — context-dependent. <code>grep -c</code> counts matches.',
+  '-e':'<b>Stands for:</b> --regexp / --expression — the pattern follows. <code>grep -e "foo"</code>',
+  '-z':'<b>Stands for:</b> --compress — gzip compression. <code>tar -czf</code> = create, gzip, file.',
+  '-x':'<b>Stands for:</b> --extract — pull files out of an archive. <code>tar -xzf</code>',
+  '-f ':'<b>Stands for:</b> --file — the archive filename follows. Must come last before the name: <code>tar -czf archive.tar.gz</code>',
+  '2>/dev/null':'<b>What it does:</b> Redirects stderr (file descriptor 2) to /dev/null (the void).<br><b>Why:</b> Hides "Permission denied" noise when searching as non-root. Errors vanish; matches still print.',
+  '2>&1':'<b>What it does:</b> Merges stderr into stdout — both streams go to the same place.<br><b>Why:</b> Capture <i>everything</code> in one log: <code>cmd > all.log 2>&1</code>',
+  '|':'<b>What it does:</b> Pipe — sends stdout of the left command as stdin to the right.<br><b>Why:</b> Chain tools: <code>ls | grep foo | wc -l</code>',
+  '&&':'<b>What it does:</b> Run the next command <i>only if</i> the previous succeeded (exit 0).<br><b>Why:</b> Safe chaining: <code>cd /data && rm -rf tmp/</code> won\'t delete if cd failed.',
+  '||':'<b>What it does:</b> Run the next command <i>only if</i> the previous failed.<br><b>Why:</b> Fallbacks: <code>cmd || echo "FAILED"</code>',
+  ';':'<b>What it does:</b> Run commands in sequence regardless of success/failure.',
+  '>':'<b>What it does:</b> Redirects stdout to a file, <b>overwriting</b> it.<br><b>⚠️ Danger:</b> <code>> /etc/fstab</code> erases the file first!',
+  '>>':'<b>What it does:</b> Redirects stdout to a file, <b>appending</b>.<br><b>Why:</b> Safe way to add lines without erasing.',
+  'tee':'<b>What it does:</b> Reads stdin, writes to a file AND passes through to stdout (like a T-junction in plumbing).<br><b>Why with sudo:</b> <code>sudo echo x > /etc/fstab</code> fails — the redirect runs as <i>you</i>, not root. <code>echo x | sudo tee -a /etc/fstab</code> works because tee runs as root.',
+};
+
+function flagInfo(flag){
+  // normalize: strip trailing spaces for lookup
+  let key = flag.trim();
+  if(FLAG_DB[key]) return FLAG_DB[key];
+  // try without leading dashes count variations
+  return `<b>${escapeHtml(flag)}</b><br>Common flag — check <code>man</code> for the full story:<br><code>man ${escapeHtml(flag.replace(/^-+/,'').replace(/[^a-z]/g,''))}</code>`;
+}
+function showFlagPopup(flag, evt){
+  let p = document.getElementById('flagPopup');
+  document.getElementById('fpTitle').textContent = flag;
+  document.getElementById('fpBody').innerHTML = flagInfo(flag);
+  p.classList.add('open');
+  // position near click, keep on screen
+  let x = evt.clientX || window.innerWidth/2, y = evt.clientY || window.innerHeight/2;
+  let pw = Math.min(320, window.innerWidth - 24);
+  x = Math.max(12, Math.min(x - pw/2, window.innerWidth - pw - 12));
+  y = Math.min(y + 12, window.innerHeight - p.offsetHeight - 12);
+  p.style.left = x+'px'; p.style.top = Math.max(12,y)+'px'; p.style.width = pw+'px';
+  evt.stopPropagation();
+}
+function hideFlagPopup(){ document.getElementById('flagPopup').classList.remove('open'); }
+document.addEventListener('click', e=>{ if(!e.target.closest('.flag-popup') && !e.target.closest('.flag-chip')) hideFlagPopup(); });
+
+/* Make flags in text clickable */
+function enrichFlags(html){
+  // wrap known flags/patterns in clickable chips (only outside existing tags)
+  return html.replace(/(^|>)([^<>]*?)(<|$)/g, (m, pre, txt, post)=>{
+    let out = txt.replace(/(`?)(-{1,2}[a-zA-Z][a-zA-Z0-9-]*|2>&1|2>\/dev\/null|>>|&&|\|\||\|)(`?)/g,
+      (mm, b1, flag, b2)=>{
+        if(FLAG_DB[flag.trim()] || /^-{1,2}[a-zA-Z]/.test(flag))
+          return `${b1}<span class="flag-chip" onclick="showFlagPopup('${flag.trim().replace(/'/g,"\\'")}',event)">${flag}</span>${b2}`;
+        return mm;
+      });
+    return pre+out+post;
+  });
+}
+function escapeHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+/* Render plain-text enrichment into styled HTML */
+function renderRich(text){
+  if(!text) return '<p style="color:var(--muted)">Nothing here yet.</p>';
+  let lines = text.split('\n').map(l=>l.trim()).filter(l=>l);
+  let html = '', inTable = false;
+  for(let ln of lines){
+    // table row: "syntax   meaning" split by 2+ spaces
+    let parts = ln.split(/\s{2,}/);
+    if(parts.length >= 2 && parts[0].length < 60 && !ln.startsWith('•') && !ln.startsWith('-')){
+      if(!inTable){ html += '<table class="concept">'; inTable = true; }
+      html += `<tr><td>${escapeHtml(parts[0])}</td><td>${escapeHtml(parts.slice(1).join(' '))}</td></tr>`;
+      continue;
+    }
+    if(inTable){ html += '</table>'; inTable = false; }
+    if(ln.startsWith('•') || ln.startsWith('- ') || /^\d+\./.test(ln)){
+      let cls = 'trap';
+      html += `<div class="${cls}">${escapeHtml(ln)}</div>`;
+    } else if(/^(sudo|ssh|scp|dnf|rpm|mkdir|cp|mv|rm|tee|diff|cat|grep|find|tar|mount|chmod|chown|systemctl|firewall-cmd|setenforce|useradd|groupadd|passwd|lvm|mkfs|lsblk|ip|nmcli|timedatectl|journalctl|ausearch|sealert)\b/.test(ln)){
+      html += `<div class="cmd-row"><span class="arrow">▸</span><code class="cmd" style="border:0;padding:0;margin:0;background:transparent">${escapeHtml(ln)}</code></div>`;
+    } else {
+      html += `<div class="txt" style="margin:6px 0">${escapeHtml(ln)}</div>`;
+    }
+  }
+  if(inTable) html += '</table>';
+  return enrichFlags(html);
+}
+
+/* ---------- tabs ---------- */
+document.querySelectorAll('.tab').forEach(el=>{
+  el.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab').forEach(e=>e.classList.remove('active'));
+    el.classList.add('active');
+    let t = el.dataset.tab;
+    ['path','tasks','recall','dash'].forEach(k=>document.getElementById((k==='tasks'?'task':k)+'list').style.display = k===t?'block':'none');
+    if(t==='dash') loadDash();
+  });
+});
+
+/* ---------- load ---------- */
+async function load(){
+  tasks = await (await fetch('/api/tasks')).json();
+  renderAllTasks();
+  let cur = await (await fetch('/api/curriculum')).json();
+  let pl = document.getElementById('pathlist'); pl.innerHTML = '';
+  if(cur.next_up){
+    let nt = tasks.find(x=>x.id===cur.next_up);
+    pl.innerHTML += `<div class="task next" onclick="openTask('${cur.next_up}')"><span class="id">▶</span><span class="title"><b>Next up:</b> ${cur.next_up} — ${nt?nt.title:''}</span><span>→</span></div>`;
+  }
+  pl.innerHTML += `<div style="padding:8px 4px;color:var(--muted);font-size:.9em">${cur.completed}/${cur.total} complete · ${cur.passed} lab-verified</div>`;
+  cur.modules.forEach(m=>{
+    let pct = Math.round(100*m.done/m.total);
+    pl.innerHTML += `<div style="margin:14px 0"><div style="font-weight:700;margin-bottom:2px">${m.title} <span style="color:var(--muted);font-weight:400">${m.done}/${m.total}</span></div><div style="font-size:.85em;color:var(--muted);margin-bottom:6px">${m.description}</div><div class="progress"><div style="width:${pct}%"></div></div>`+
+      m.tasks.map(t=>`<div class="task ${t.passed?'done':'todo'}" ${t.locked?'style="opacity:.5"':`onclick="openTask('${t.id}')"`}><span class="id">${t.id}</span><span class="title">${tasks.find(x=>x.id===t.id)?.title||t.id} ${t.locked?'🔒':''}<br><span class="diff">${'★'.repeat(t.difficulty)}</span></span><button class="check-toggle" aria-label="toggle ${t.id}" onclick="event.stopPropagation();toggleComplete('${t.id}')">${t.completed?'☑':'☐'}</button>${t.passed?'<span>✅</span>':''}</div>`).join('')+`</div>`;
+  });
+  let r = await (await fetch('/api/recall')).json();
+  document.getElementById('recalllist').innerHTML = r.length
+    ? r.map(x=>`<div class="task todo" onclick="openTask('${x.task}')"><span class="id">${x.task}</span><span class="title">Due for review — tap to revisit</span><span>→</span></div>`).join('')
+    : '<p style="padding:16px;color:var(--muted)">Nothing due. 🎉</p>';
+}
+function renderAllTasks(){
+  let el = document.getElementById('tasklist'); el.innerHTML = '';
+  tasks.forEach(t=>{
+    let d = document.createElement('div');
+    d.className = 'task '+(t.passed?'done':'todo');
+    d.innerHTML = `<span class="id">${t.id}</span><span class="title">${t.title}</span><button class="check-toggle" onclick="event.stopPropagation();toggleComplete('${t.id}')">${t.completed?'☑':'☐'}</button>${t.passed?'<span>✅</span>':''}`;
+    d.onclick = ()=>openTask(t.id);
+    el.appendChild(d);
+  });
+}
+async function toggleComplete(tid){
+  const task = tasks.find(t=>t.id===tid); if(!task) return;
+  try{
+    const r = await fetch('/api/tasks/'+encodeURIComponent(tid)+'/complete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({completed:!task.completed})});
+    if(!r.ok) throw new Error('rejected');
+    await load();
+  }catch(e){ alert('Could not save: '+e.message); }
+}
+
+/* ---------- modal ---------- */
+const ITABS = [
+  ['mission','🎯 Mission'], ['deep','🧠 Deep Dive'], ['research','🔎 Find It Yourself'], ['teach','📖 Teach Me'],
+  ['anatomy','⌨️ Command Anatomy'], ['practice','🧩 Variations'],
+  ['traps','⚠️ Exam Traps'], ['fix','🔧 Fix It'], ['check','💡 Self-check'], ['expert','🔬 Expert'],
+];
+let activeItab = 'mission';
+
+async function openTask(tid){
+  const requestId=++modalRequest;
+  currentTid = tid; activeItab = 'mission';
+  let t = tasks.find(x=>x.id===tid);
+  if(!t) return;
+  if(!enrichCache[tid]){
+    document.getElementById('modalHead').innerHTML = `<div class="qid">${tid}</div><h2>${t.title}</h2><div class="meta">Loading…</div>`;
+    document.getElementById('modalBody').innerHTML = '<p style="color:var(--muted);padding:20px;text-align:center">Loading deep-dive content…</p>';
+    document.getElementById('modalBg').classList.add('open');
+    document.body.style.overflow = 'hidden';
+    try{ enrichCache[tid] = await readJSON(`/api/tasks/${tid}/enrichment`); }
+    catch(e){ enrichCache[tid] = {}; }
+  } else {
+    document.getElementById('modalBg').classList.add('open');
+    document.body.style.overflow = 'hidden';
+  }
+  if(!lessonCache[tid]){
+    try{ lessonCache[tid]=await readJSON(`/api/tasks/${tid}/lesson`); }
+    catch(e){ /* Keep legacy content available; a later open/retry tries again. */ }
+  }
+  if(requestId!==modalRequest) return;
+  document.getElementById('modalHead').innerHTML = `
+    <div class="qid">${tid}</div><h2>${t.title}</h2>
+    <div class="meta">🖥️ ${(t.hosts||[]).join(', ')} · ${t.attempts} attempt${t.attempts===1?'':'s'} ${t.passed?'· ✅ Passed':''}</div>
+    <div class="actions">
+      <button class="btn-setup" onclick="doAction('${tid}','fixture')">🔧 Setup lab</button>
+      <button class="btn-term" onclick="window.LMLPwa.openTerminal('${(t.hosts||[])[0]}','${tid}')">🖥️ Terminal</button>
+      <button class="btn-check" onclick="doAction('${tid}','grade')">✅ Check work</button>
+      <button class="btn-reset" onclick="doAction('${tid}','reset')">↩️ Reset</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:4px"><button class="btn-ghost" style="flex:1" onclick="getHint('${tid}')">💡 Hint</button></div>
+    <div id="result"></div><div id="hints"></div>`;
+  renderItabs();
+  renderItabBody();
+}
+function renderItabs(){
+  document.getElementById('itabs').innerHTML = ITABS.map(([k,label])=>
+    `<button type="button" class="itab ${k===activeItab?'active':''}" aria-pressed="${k===activeItab}" onclick="activeItab='${k}';hideFlagPopup();renderItabs();renderItabBody()">${label}</button>`).join('');
+}
+function renderItabBody(){
+  let e = enrichCache[currentTid]||{}, b = document.getElementById('modalBody'), h = '';
+  const lesson=lessonCache[currentTid];
+  if(lesson){
+    if(activeItab==='anatomy'){
+      window.renderAnatomyTab();
+      return;
+    }
+    h=LessonView.render(lesson,activeItab);
+    if(activeItab==='mission') h=`<div class="sect"><h3>🎯 Your mission</h3><div class="txt">${e.objective||'See task instructions.'}</div></div>`+h;
+    b.innerHTML=h;
+    b.scrollTop=0;
+    return;
+  }
+  if(['anatomy','practice','check','expert'].includes(activeItab)){
+    b.innerHTML='<p>Could not load the full lesson.</p><button class="btn-ghost" onclick="retryLesson()">Retry lesson</button>';
+    return;
+  }
+  if(activeItab==='mission'){
+    h = `<div class="sect"><h3>🎯 Your mission</h3><div class="txt">${e.objective||'See lesson.'}</div></div>`;
+    if(e.testing) h += `<div class="sect"><h3>🧪 What this tests</h3>${renderRich(e.testing)}</div>`;
+    if(e.shortcut) h += `<div class="sect"><h3>⚡ Mental shortcut</h3><div class="shortcut">${escapeHtml(e.shortcut)}</div></div>`;
+  } else if(activeItab==='deep'){
+    h = `<div class="sect"><h3>🧠 Core concepts — tap any <span class="flag-chip">flag</span> for details</h3>${renderRich(e.concept)}</div>`;
+    if(e.key_commands) h += `<div class="sect"><h3>⌨️ Key commands</h3>${renderRich(e.key_commands)}</div>`;
+  } else if(activeItab==='teach'){
+    h = `<div class="sect"><h3>📖 Step by step</h3><div class="txt">Loading…</div></div>`;
+    b.innerHTML = h;
+    teachMe(currentTid);
+    return;
+  } else if(activeItab==='traps'){
+    h = `<div class="sect"><h3>⚠️ Exam traps — read before you start</h3>${renderRich(e.traps)}</div>`;
+  } else if(activeItab==='fix'){
+    h = `<div class="sect"><h3>🔧 Troubleshooting</h3>${renderRich(e.troubleshooting)}</div>`;
+  }
+  b.innerHTML = h || '<p style="color:var(--muted)">No content yet for this section.</p>';
+}
+function closeModal(){
+  modalRequest++;
+  document.getElementById('modalBg').classList.remove('open');
+  document.body.style.overflow = '';
+  hideFlagPopup();
+}
+async function retryLesson(){
+  const tid=currentTid, requestId=modalRequest;
+  try{
+    const lesson=await readJSON(`/api/tasks/${tid}/lesson`);
+    lessonCache[tid]=lesson;
+    if(tid===currentTid && requestId===modalRequest) renderItabBody();
+  }catch(e){
+    if(tid===currentTid && requestId===modalRequest) document.getElementById('modalBody').innerHTML='<p>Lesson unavailable. Try again after the portal restart.</p><button class="btn-ghost" onclick="retryLesson()">Retry lesson</button>';
+  }
+}
+document.getElementById('modalBg').addEventListener('click', e=>{ if(e.target.id==='modalBg') closeModal(); });
+document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeModal(); hideFlagPopup(); } });
+
+async function teachMe(tid){
+  let b = document.getElementById('modalBody');
+  try{
+    let w = await (await fetch(`/api/tasks/${tid}/walkthrough`)).json();
+    if(tid!==currentTid || activeItab!=='teach' || !document.getElementById('modalBg').classList.contains('open')) return;
+    let steps = (w.steps||[]).map((s,i)=>`<div style="margin:10px 0;padding:10px;background:#0d1117;border-radius:8px;border:1px solid var(--border)"><b style="color:var(--accent)">Step ${i+1}:</b> <span style="font-size:.92em">${s.text||''}</span>${s.cmd?`<code class="cmd">${escapeHtml(s.cmd)}</code>`:''}</div>`).join('');
+    b.innerHTML = `<div class="sect"><h3>📖 Step-by-step walkthrough</h3>${steps||'<p style="color:var(--muted)">No walkthrough yet.</p>'}<p style="font-size:.85em;color:var(--muted);margin-top:10px">Practice until it's muscle memory, then try without looking.</p></div>`;
+  }catch(e){ b.innerHTML = '<p style="color:var(--muted)">Could not load walkthrough.</p>'; }
+}
+async function doAction(tid,act){
+  let r = document.getElementById('result');
+  if(!window.LMLPwa || !window.LMLPwa.isControllerConnected()){
+    r.innerHTML = `<div class="hint">🔌 Live VM ${act==='grade'?'grading':act==='fixture'?'setup':'reset'} needs the lab controller. Your lesson and practice progress remain available offline.<br><button class="btn-ghost" type="button" onclick="window.LMLPwa.openLiveTask('${tid}')">Open this task in the live portal</button></div>`;
+    return;
+  }
+  if(act==='grade'){
+    r.innerHTML = '<p style="color:var(--muted)">Checking…</p>';
+    let res = await (await fetch(`/api/tasks/${tid}/${act}`,{method:'POST'})).json();
+    r.innerHTML = `<h3 style="margin:8px 0">${res.passed?'✅ PASS — nicely done!':'❌ Not quite — keep going'}</h3>`+
+      (res.checks||[]).map(c=>`<div class="check ${c.passed?'pass':'fail'}">${c.passed?'✓':'✗'} ${escapeHtml(c.name)}${c.passed?'':'<br><span style="color:var(--muted)">'+escapeHtml(c.hint||'')+'</span>'}</div>`).join('');
+    load(); return;
+  }
+  r.innerHTML = '<p style="color:var(--muted)">⏳ Starting…</p>';
+  let start = await (await fetch(`/api/tasks/${tid}/${act}`,{method:'POST'})).json();
+  let jid = start.job_id, t0 = Date.now();
+  r.innerHTML = `⏳ ${act==='fixture'?'Setting up the lab':'Resetting the lab'}… <span id="elapsed">0s</span>`;
+  let timer = setInterval(()=>{let e2=document.getElementById('elapsed');if(e2)e2.textContent=Math.round((Date.now()-t0)/1000)+'s';},1000);
+  while(true){
+    await new Promise(r2=>setTimeout(r2,3000));
+    let j = await (await fetch(`/api/jobs/${jid}`)).json();
+    if(j.status==='done'){ clearInterval(timer);
+      let ok = (j.log||[]).every(x=>x[2]===true||x[2]==='already stopped');
+      r.innerHTML = `<h3 style="margin:8px 0">${ok?'✅ Lab ready — start typing!':'⚠️ Done with warnings'}</h3>`; break;
+    } else if(j.status==='error'){ clearInterval(timer);
+      r.innerHTML = `<h3>❌ Failed</h3><pre style="font-size:.8em">${escapeHtml((j.error||'unknown').slice(0,400))}</pre>`; break; }
+  }
+}
+async function getHint(tid){
+  let h = await (await fetch(`/api/tasks/${tid}/hint`)).json();
+  document.getElementById('hints').innerHTML = (h.hints||[]).map(x=>`<div class="hint">💡 ${escapeHtml(x)}</div>`).join('')||'<p style="color:var(--muted)">No hints yet.</p>';
+}
+async function loadDash(){
+  let s = await (await fetch('/api/stats')).json();
+  let recent = (s.recent||[]).map(r=>`<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:.9em"><span style="color:var(--muted)">${new Date(r.ts*1000).toLocaleDateString()}</span> <b>${r.task}</b> ${r.passed?'✅':'❌'}</div>`).join('');
+  document.getElementById('dashlist').innerHTML = `<div class="stat-grid">
+    <div class="stat"><div class="n">🔥</div><div class="n">${s.streak}</div><div class="l">day streak</div></div>
+    <div class="stat"><div class="n">✅</div><div class="n">${s.passed}/38</div><div class="l">passed</div></div>
+    <div class="stat"><div class="n">🎯</div><div class="n">${s.total_attempts}</div><div class="l">attempts</div></div></div>
+    <h3 style="margin:14px 0 6px">Recent activity</h3>${recent||'<p style="color:var(--muted)">No activity yet.</p>'}`;
+}
+load().then(()=>{
+  const requestedTask = new URLSearchParams(location.search).get('task');
+  if(/^Q\d{2}$/.test(requestedTask||'')) openTask(requestedTask);
+}).catch(error=>{
+  document.getElementById('pathlist').innerHTML = `<p class="hint">Could not load the lesson pack: ${escapeHtml(error.message||'unknown error')}. Refresh while connected to the internet.</p>`;
+});
+</script>
+</body>
+</html>
+
