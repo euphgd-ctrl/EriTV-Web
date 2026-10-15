@@ -5,7 +5,7 @@
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const state = {task:null, data:null, progress:null, selected:'', mode:'', host:'', capstoneHost:'',
     placed:[], feedback:null, hints:[], retryFeedback:null, capstoneFeedback:null, capstoneHints:[],
-    comparisons:{}, revealCommand:false, revealCapstone:false, error:null,
+    comparisons:{}, revealCommand:false, revealCapstone:false, error:null,checkingCommand:false,
     hintsComplete:false, capstoneHintsComplete:false, identityWarning:'',storageWarning:''};
   const hosts = ['workstation','servera','serverb'];
   const modeFor = guidance => guidance==='independent'?'type':guidance==='supported'?'blanks':'tokens';
@@ -258,7 +258,7 @@
     }
     return `<section class="ca-challenge" aria-labelledby="ca-challenge-title"><div class="ca-kicker">Stage 4 · Build your own command</div><h4 id="ca-challenge-title">Build your own command</h4>
       ${modeButtons()}${hostSelect(state.host, 'ca-command-host','command-host')}${answerArea}
-      <div class="ca-inline-actions"><button type="button" class="btn-term" data-ca-check="${esc(command.id)}">Check command</button>
+      <div class="ca-inline-actions"><button type="button" class="btn-term" data-ca-check="${esc(command.id)}" ${state.checkingCommand?'disabled':''}>${state.checkingCommand?'Checking command…':'Check command'}</button>
       <button type="button" class="btn-ghost" data-ca-hint="${esc(command.id)}">Hint <span aria-hidden="true">(${hintCount(conceptRecord(challenge.concept_id))} total)</span></button>
       <button type="button" class="btn-ghost" data-ca-independent="${esc(command.id)}">New attempt without hints</button>
       <button type="button" class="btn-ghost" data-ca-reveal="${esc(command.id)}">Reveal solution</button></div>
@@ -301,7 +301,7 @@
   function render(data, progress){
     data=normalizeContent(data);
     const changedTask=state.task!==data.id;
-    if(changedTask){state.selected='';state.mode='';state.host='';state.capstoneHost='';state.placed=[];state.feedback=null;state.hints=[];state.retryFeedback=null;state.capstoneFeedback=null;state.capstoneHints=[];state.comparisons={};state.revealCommand=false;state.revealCapstone=false;state.error=null;state.hintsComplete=false;state.capstoneHintsComplete=false;}
+    if(changedTask){state.selected='';state.mode='';state.host='';state.capstoneHost='';state.placed=[];state.feedback=null;state.hints=[];state.retryFeedback=null;state.capstoneFeedback=null;state.capstoneHints=[];state.comparisons={};state.revealCommand=false;state.revealCapstone=false;state.error=null;state.checkingCommand=false;state.hintsComplete=false;state.capstoneHintsComplete=false;}
     state.data=data; state.task=data.id; state.progress=normalizeProgress(progress||{concepts:[],recommended_guidance:'guided',guidance:'guided'});
     if(changedTask){
       try{state.host=localStorage.getItem(storageKey(state.task,'command-host','select'))||'';state.capstoneHost=localStorage.getItem(storageKey(state.task,'capstone-host','select'))||'';}catch(e){storageUnavailable();}
@@ -436,10 +436,15 @@
     return document.querySelector('[data-ca-answer="type"]')?.value||getDraft(command.challenge.id,'type');
   }
   async function checkCommand(id){
-    const command=state.data.commands.find(c=>c.id===id); if(!command){message(`Unknown command challenge: ${id}`);return;}
-    const answer=getAnswer(command), host=document.querySelector('[data-ca-host]')?.value||'';
-    if(state.mode!=='blanks') saveDraft(command.challenge.id,state.mode,answer);
+    if(state.checkingCommand) return;
+    state.checkingCommand=true;
+    state.error=null;
+    refresh();
     try{
+      const command=state.data?.commands.find(c=>c.id===id);
+      if(!command) throw new Error(`Unknown command challenge: ${id}`);
+      const answer=getAnswer(command), host=document.querySelector('[data-ca-host]')?.value||'';
+      if(state.mode!=='blanks') saveDraft(command.challenge.id,state.mode,answer);
       state.feedback=await post('check',{command_id:id,answer,host,mode:state.mode,hints_used:state.hints.length});
       state.retryFeedback=null;
       setProgress(state.feedback.progress);
@@ -450,6 +455,7 @@
       }
       refresh();
     }catch(e){ message(e); }
+    finally{state.checkingCommand=false;refresh();}
   }
   async function predict(id,index){
     try{ state.comparisons[id]=await post('predict',{comparison_id:id,selected_index:index});
