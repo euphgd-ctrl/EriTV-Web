@@ -1,7 +1,7 @@
 /* Offline shell and course-content cache. API, SSH terminal, and VM actions
    always use the network and are never cached. */
 const CACHE_PREFIX = 'linux-mastery-lab-pwa-';
-const CACHE = CACHE_PREFIX + 'v2';
+const CACHE = CACHE_PREFIX + 'v3';
 const ASSETS = [
   './', './index.html', './manifest.webmanifest', './offline-pack.json',
   './static/lesson.js', './static/command_anatomy.js', './static/pwa-bridge.js',
