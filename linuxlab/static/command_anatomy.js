@@ -196,7 +196,9 @@
   function assembled(command){
     const bank=stableBank(command);
     return state.placed.map((idx,n)=>{
-      const item=bank[idx]; return (n===0?'':(item.join||' '))+item.value;
+      const item=bank[idx];
+      if(!item||typeof item.value!=='string') throw new Error('The token selection is out of date. Reset the command and try again.');
+      return (n===0?'':(item.join||' '))+item.value;
     }).join('');
   }
   function blankIndices(command){
@@ -520,7 +522,7 @@
       state.placed=[]; state.feedback=null; state.hints=[]; state.revealCommand=false;
       const c=selectedCommand(); if(c) restorePlaced(c); refresh();
     }else if(button.dataset.caMode){state.mode=button.dataset.caMode;state.placed=[];refresh();}
-    else if(button.hasAttribute('data-ca-token')){state.placed.push(Number(button.dataset.caToken));saveDraft(selectedCommand().challenge.id,'tokens',JSON.stringify(state.placed));refresh();}
+    else if(button.hasAttribute('data-ca-token')){const command=selectedCommand(), index=Number(button.dataset.caToken); if(!command||!Number.isInteger(index)||index<0||index>=stableBank(command).length) throw new Error('That token is no longer available. Reset the command and try again.'); state.placed.push(index);saveDraft(command.challenge.id,'tokens',JSON.stringify(state.placed));refresh();}
     else if(button.hasAttribute('data-ca-undo')){state.placed.pop();saveDraft(selectedCommand().challenge.id,'tokens',JSON.stringify(state.placed));refresh();}
     else if(button.hasAttribute('data-ca-reset')){state.placed=[];saveDraft(selectedCommand().challenge.id,'tokens','[]');state.feedback=null;refresh();}
     else if(button.dataset.caCheck) checkCommand(button.dataset.caCheck);
@@ -545,7 +547,7 @@
       else navigator.clipboard.writeText(c.command).catch(e=>message(`Could not copy command: ${e?.message||'clipboard access was denied.'}`));
     }
   }
-  document.addEventListener('click',click);
+  document.addEventListener('click',event=>{try{click(event);}catch(error){message(error);}});
   document.addEventListener('input',saveTyped);
   document.addEventListener('change',saveHost);
   function loadingHtml(task){return `<p class="ca-loading" role="status">Loading Command Anatomy for ${esc(task)}…</p>`;}
