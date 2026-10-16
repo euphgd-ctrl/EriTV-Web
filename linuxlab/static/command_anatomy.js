@@ -155,16 +155,18 @@
       <p><b>Contrast:</b> <code>${esc(m.contrast||'')}</code></p>
       <p><b>Practical consequence:</b> ${esc(m.consequence||'')}</p>
       <p><b>New retry:</b> ${esc(m.retry||'')}</p><p><b>Man page:</b> ${esc(m.man||'')}</p></details></article>`;
-    if(m?.retry_command){
-      const retryKey=`retry:${m.id}`;
-      const retryFeedback=state.retryFeedback?.id===m.id?state.retryFeedback.result:null;
+    if(m?.retry_command && typeof result.misconception==='string' && result.misconception){
+      // The API keys misconceptions by result.misconception; micro_lesson has no id.
+      const misconceptionId=result.misconception;
+      const retryKey=`retry:${misconceptionId}`;
+      const retryFeedback=state.retryFeedback?.id===misconceptionId?state.retryFeedback?.result:null;
       const saved=getDraft(retryKey,'type');
       html+=`<section class="ca-retry" aria-label="Fresh retry variation"><h4>Try a fresh variation</h4>
         <p>${esc(m.retry||'Apply this idea to a new example.')}</p>
-        ${m.id==='TARGET_HOST'?hostSelect(getRetryHost(m.id), 'ca-retry-host', `retry-host:${m.id}`):''}
-        <label class="ca-input-label" for="ca-retry-${esc(m.id)}">Write the command</label>
-        <textarea id="ca-retry-${esc(m.id)}" class="ca-answer" data-ca-retry="${esc(m.id)}" rows="2" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Try it without copying the example">${esc(saved)}</textarea>
-        <button type="button" class="btn-ghost" data-ca-retry-check="${esc(m.id)}">Check retry</button>
+        ${misconceptionId==='TARGET_HOST'?hostSelect(getRetryHost(misconceptionId), 'ca-retry-host', `retry-host:${misconceptionId}`):''}
+        <label class="ca-input-label" for="ca-retry-${esc(misconceptionId)}">Write the command</label>
+        <textarea id="ca-retry-${esc(misconceptionId)}" class="ca-answer" data-ca-retry="${esc(misconceptionId)}" rows="2" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Try it without copying the example">${esc(saved)}</textarea>
+        <button type="button" class="btn-ghost" data-ca-retry-check="${esc(misconceptionId)}">Check retry</button>
         ${retryFeedback?`<div class="ca-feedback ${retryFeedback.outcome==='correct'?'is-correct':'is-error'}" role="status" aria-live="polite"><b>${esc(outcomeLabel(retryFeedback.outcome))}</b><p>${esc(retryFeedback.message||'')}</p></div>`:''}</section>`;
     }
     if(result.missing?.length) html+=`<p class="ca-note">Still needed: ${esc(result.missing.join(', '))}</p>`;
